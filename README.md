@@ -4,7 +4,7 @@
 
 **Whisper Transcription UI** is a user-friendly graphical user interface (GUI) designed for the [whisper-standalone-win](https://github.com/Purfview/whisper-standalone-win) tool. With this tool, you can easily transcribe or translate audio and video files using various Whisper models. The application allows customization of settings and saves your preferences for future use.
 
-![screenshot](https://i.imgur.com/ZGihUKE.png)
+![screenshot](https://i.imgur.com/sX0NlZi.png)
 
 ## Features
 
