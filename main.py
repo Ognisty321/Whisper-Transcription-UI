@@ -1,12 +1,13 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import ttkbootstrap as ttb
+from tkinterdnd2 import DND_FILES, TkinterDnD
 import subprocess
 import os
 import threading
 import logging
 from datetime import datetime
 import configparser
+import ttkbootstrap as ttb
 
 # --- Constants ---
 AUDIO_VIDEO_FILETYPES = [
@@ -34,7 +35,6 @@ DEFAULT_VALUES = {
     "mdx_device": "cuda",
 }
 
-# --- Configuration Setup ---
 CONFIG_FILE = "config.ini"
 config = configparser.ConfigParser()
 
@@ -85,14 +85,12 @@ def save_config():
 
 load_config()
 
-# --- Logging Setup ---
 logging.basicConfig(filename='transcription.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 def enable_logging():
     return config.getboolean('Settings', 'enable_logging', fallback=True)
 
-# --- CreateToolTip class ---
 class CreateToolTip(object):
     def __init__(self, widget, text='widget info'):
         self.widget = widget
@@ -116,9 +114,7 @@ class CreateToolTip(object):
         if self.tw:
             self.tw.destroy()
 
-# --- Functions ---
 def browse_files():
-    """Opens a file dialog to choose multiple audio/video files."""
     filenames = filedialog.askopenfilenames(
         initialdir="/",
         title="Select Audio/Video Files",
@@ -129,7 +125,6 @@ def browse_files():
         file_listbox.insert(tk.END, filename)
 
 def browse_output_dir():
-    """Opens a directory dialog to choose an output directory."""
     directory = filedialog.askdirectory(
         initialdir="/",
         title="Select Output Directory",
@@ -138,20 +133,28 @@ def browse_output_dir():
     output_dir_entry.insert(0, directory)
 
 def validate_file_extension(filename):
-    """Validates file extension to ensure it is supported."""
     valid_extensions = ('.wav', '.mp3', '.m4a', '.ogg', '.mp4', '.mkv', '.avi', '.webm')
     return any(filename.lower().endswith(ext) for ext in valid_extensions)
 
 def validate_numeric_input(value, min_value, max_value):
-    """Validates numeric input to ensure it is within the specified range."""
     try:
         numeric_value = float(value)
         return min_value <= numeric_value <= max_value
     except ValueError:
         return False
 
+def add_file_from_entry():
+    file_path = file_entry.get().strip()
+    if file_path:
+        if validate_file_extension(file_path) or file_path.startswith(("http://", "https://")):
+            file_listbox.insert(tk.END, file_path)
+            file_entry.delete(0, tk.END)
+        else:
+            messagebox.showerror("Error", f"Invalid file path or unsupported file extension: {file_path}")
+    else:
+        messagebox.showerror("Error", "Input cannot be empty.")
+
 def transcribe(root):
-    """Thread target function to run transcription."""
     try:
         run_transcription(root)
     except Exception as e:
@@ -160,10 +163,9 @@ def transcribe(root):
             logging.error(f"An unexpected error occurred during transcription: {e}")
 
 def run_transcription(root):
-    """Gets user input, validates, and runs transcription command."""
     file_list = file_listbox.get(0, tk.END)
     if not file_list:
-        messagebox.showerror("Error", "Please select at least one audio/video file.")
+        messagebox.showerror("Error", "Please select at least one audio/video file or provide a link.")
         return
 
     language = language_var.get()
@@ -172,7 +174,6 @@ def run_transcription(root):
     output_format = output_format_var.get()
     output_dir = output_dir_entry.get() or "output"
 
-    # --- Advanced Options ---
     ff_mdx_kim2 = ff_mdx_kim2_var.get()
     vad_filter = vad_filter_var.get()
     vad_alt_method = vad_alt_method_var.get() if vad_filter else ""
@@ -214,14 +215,18 @@ def run_transcription(root):
     progress_var.set(0)
     progress_label.config(text=f"Progress: 0/{total_files}")
 
-    for index, filename in enumerate(file_list, start=1):
-        if not validate_file_extension(filename):
-            messagebox.showerror("Error", f"Invalid file extension: {filename}")
-            if enable_logging():
-                logging.error(f"Invalid file extension: {filename}")
-            continue
+    for index, file_path in enumerate(file_list, start=1):
+        if file_path.startswith(("http://", "https://")):
+            try:
+                filename = download_audio(file_path)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to download audio from {file_path}: {e}")
+                if enable_logging():
+                    logging.error(f"Failed to download audio from {file_path}: {e}")
+                continue
+        else:
+            filename = file_path
 
-        # --- Construct the command list ---
         command = [
             "faster-whisper-xxl.exe",
             filename,
@@ -254,9 +259,8 @@ def run_transcription(root):
         if best_of is not None:
             command.extend(["--best_of", str(best_of)])
 
-        command = [arg for arg in command if arg]  # Remove any empty arguments
+        command = [arg for arg in command if arg]
 
-        # --- Print debugging information ---
         if enable_logging():
             logging.info("Selected Options:")
             logging.info(f"  File: {filename}")
@@ -295,9 +299,55 @@ def run_transcription(root):
     if enable_logging():
         logging.info("Transcription completed for all files.")
 
-# --- GUI setup ---
+def on_drop(event, root):
+    files = root.tk.splitlist(event.data)
+    for file in files:
+        if validate_file_extension(file):
+            file_listbox.insert(tk.END, file)
+        else:
+            messagebox.showerror("Error", f"Invalid file extension: {file}")
+
+def clear_files():
+    file_listbox.delete(0, tk.END)
+
+def download_audio(url):
+    output_dir = "downloads"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Original filename preservation, using `yt-dlp` template options
+    filename_template = os.path.join(output_dir, "%(title)s.%(ext)s")
+    command = [
+        "yt-dlp",
+        "-f", "bestaudio",
+        "--output", filename_template,
+        url
+    ]
+
+    if enable_logging():
+        logging.info(f"Executing yt-dlp command: {' '.join(command)}")
+
+    result = subprocess.run(command, check=True, capture_output=True)
+    if enable_logging():
+        logging.info(f"yt-dlp stdout: {result.stdout.decode('utf-8')}")
+        logging.info(f"yt-dlp stderr: {result.stderr.decode('utf-8')}")
+
+    output_filename = None
+    for line in result.stdout.splitlines():
+        if b"Destination:" in line:
+            output_filename = line.decode('utf-8').split("Destination: ")[-1].strip()
+            break
+
+    if output_filename is None:
+        raise Exception("Failed to locate the downloaded file.")
+
+    if enable_logging():
+        logging.info(f"Downloaded file location: {output_filename}")
+
+    return output_filename
+
 def create_main_window():
-    root = ttb.Window(themename="superhero")
+    root = TkinterDnD.Tk()
+    style = ttb.Style(theme='superhero')  # Initialize ttkbootstrap style
     root.title("Whisper Transcription App")
     root.resizable(False, False)
     return root
@@ -323,16 +373,36 @@ def create_frames(root):
 
     return file_frame, options_frame, output_dir_frame, advanced_options_frame, progress_frame, button_frame
 
-def create_file_selection_frame(file_frame):
+def create_file_selection_frame(file_frame, root):
     file_label = ttk.Label(file_frame, text="Audio/Video Files:")
     file_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
 
     global file_listbox
-    file_listbox = tk.Listbox(file_frame, selectmode=tk.MULTIPLE, height=8, width=50)
+    file_listbox = tk.Listbox(file_frame, selectmode=tk.MULTIPLE, height=8, width=90)
     file_listbox.grid(row=1, column=0, padx=5, pady=5, columnspan=2)
 
-    browse_button = ttk.Button(file_frame, text="Browse", command=browse_files)
-    browse_button.grid(row=1, column=2, padx=5, pady=5, sticky="n")
+    # Create a new frame for manual input
+    manual_entry_frame = ttk.Frame(file_frame)
+    manual_entry_frame.grid(row=2, column=0, padx=5, pady=5, columnspan=2, sticky="ew")
+    
+    global file_entry
+    file_entry = ttk.Entry(manual_entry_frame, width=70)
+    file_entry.grid(row=0, column=0, padx=5, pady=5)
+
+    add_file_button = ttk.Button(manual_entry_frame, text="Add", command=add_file_from_entry)
+    add_file_button.grid(row=0, column=1, padx=5, pady=5)
+
+    button_frame = ttk.Frame(file_frame)
+    button_frame.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+
+    browse_button = ttk.Button(button_frame, text="Browse", command=browse_files)
+    browse_button.grid(row=0, column=0, padx=5, pady=5)
+
+    clear_button = ttk.Button(button_frame, text="Clear", command=clear_files)
+    clear_button.grid(row=0, column=1, padx=5, pady=5)
+
+    file_listbox.drop_target_register(DND_FILES)
+    file_listbox.dnd_bind('<<Drop>>', lambda e: on_drop(e, root))
 
 def create_output_dir_frame(output_dir_frame):
     output_dir_label = ttk.Label(output_dir_frame, text="Output Directory:")
@@ -480,22 +550,11 @@ def main():
     root = create_main_window()
     file_frame, options_frame, output_dir_frame, advanced_options_frame, progress_frame, button_frame = create_frames(root)
 
-    # File selection frame setup
-    create_file_selection_frame(file_frame)
-
-    # Output directory frame setup
+    create_file_selection_frame(file_frame, root)
     create_output_dir_frame(output_dir_frame)
-
-    # Options frame setup
     create_options_frame(options_frame)
-
-    # Advanced options frame setup
     create_advanced_options_frame(advanced_options_frame)
-
-    # Progress frame setup
     create_progress_frame(progress_frame)
-
-    # Transcribe button setup
     create_transcribe_button(root, button_frame)
 
     root.mainloop()
