@@ -18,6 +18,7 @@
 ## Installation
 
 ### Prerequisites
+- **[Whisper Standalone](https://github.com/Purfview/whisper-standalone-win/releases):** Download and install the latest release of whisper-standalone-win. 
 - Python 3.x
 - Tkinter
 - ttkbootstrap
@@ -68,4 +69,3 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 ## Contact
 
 For any questions or suggestions, feel free to reach out to [OgnistyPoland](https://github.com/OgnistyPoland).
-
