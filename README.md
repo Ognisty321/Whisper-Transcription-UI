@@ -9,13 +9,13 @@
 ## Features
 
 - **Easy file selection:** Browse, select, or paste multiple audio and video files.
+- **URL Support:** Directly input URLs to transcribe audio from online sources.
+- **Drag and Drop:** Supports drag-and-drop file selection.
 - **Customizable settings:** Adjust transcription options such as language, model, task (transcribe/translate), output format, and more.
 - **Advanced options:** Enable/disable options such as FF MDX Kim2, VAD filter, word timestamps, and set advanced parameters like temperature, beam size, and more.
 - **Progress tracking:** Monitor the transcription progress of your files.
 - **Save settings:** Save your transcription and advanced settings for future sessions.
 - **Logging:** Enable/disable logging to keep track of the transcription process and errors.
-- **URL Support:** Directly input URLs to transcribe audio from online sources.
-- **Drag and Drop:** Supports drag-and-drop file selection.
 
 ## Installation
 
