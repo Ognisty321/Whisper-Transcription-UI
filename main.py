@@ -15,7 +15,7 @@ AUDIO_VIDEO_FILETYPES = [
     ("Video files", "*.mp4 *.mkv *.avi *.webm"),
     ("All files", "*.*"),
 ]
-SUPPORTED_LANGUAGES = ["English", "Polish", "Japanese", "Spanish"]
+SUPPORTED_LANGUAGES = ["Auto Detect", "English", "Polish", "Japanese", "Spanish"]
 WHISPER_MODELS = ["base", "base.en", "small", "small.en", "medium", "medium.en", "large", "large-v2", "large-v3", "distil-large-v2", "distil-large-v3"]
 TASK_OPTIONS = ["transcribe", "translate"]
 OUTPUT_FORMAT_OPTIONS = ["txt", "vtt", "srt", "tsv", "json", "all"]
@@ -23,7 +23,7 @@ VAD_ALT_METHOD_OPTIONS = ["silero_v3", "silero_v4", "pyannote_v3", "pyannote_onn
 COMPUTE_TYPE_OPTIONS = ["default", "auto", "int8", "int8_float16", "int8_float32", "int8_bfloat16", "int16", "float16", "float32", "bfloat16"]
 DEFAULT_VALUES = {
     "language": SUPPORTED_LANGUAGES[0],
-    "model": WHISPER_MODELS[0],
+    "model": WHISPER_MODELS[7],
     "task": TASK_OPTIONS[0],
     "output_format": OUTPUT_FORMAT_OPTIONS[0],
     "vad_alt_method": "pyannote_v3",
@@ -171,11 +171,14 @@ def run_transcription(root):
         return
 
     language = language_var.get()
+    if language == "Auto Detect":
+        language = None 
+    
     model = model_var.get()
     task = task_var.get()
     output_format = output_format_var.get()
     output_dir = output_dir_entry.get() or "output"
-    exe_path = config.get('Settings', 'exe_path', fallback=DEFAULT_VALUES['exe_path']) or "faster-whisper-xxl.exe"
+    exe_path = config.get('Settings', 'exe_path', fallback=DEFAULT_VALUES['exe_path']) or "faster-whisper-xxl.exe" 
 
     ff_mdx_kim2 = ff_mdx_kim2_var.get()
     vad_filter = vad_filter_var.get()
@@ -231,9 +234,8 @@ def run_transcription(root):
             filename = file_path
 
         command = [
-            exe_path, 
+            exe_path,
             filename,
-            "--language", language,
             "--model", model,
             task_option,
             "--output_dir", output_dir,
@@ -241,6 +243,9 @@ def run_transcription(root):
             "--sentence",
             "--compute_type", compute_type,
         ]
+
+        if language:
+            command.extend(["--language", language]) 
 
         if ff_mdx_kim2:
             command.extend(["--ff_mdx_kim2", "--mdx_chunk", str(mdx_chunk), "--mdx_device", mdx_device])
@@ -262,7 +267,7 @@ def run_transcription(root):
         if best_of is not None:
             command.extend(["--best_of", str(best_of)])
 
-        command = [arg for arg in command if arg]
+        command = [arg for arg in command if arg]  # Filter out any empty strings
 
         if enable_logging():
             logging.info("Selected Options:")
