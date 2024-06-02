@@ -70,4 +70,4 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 
 ## 📞 Contact
 
-Have questions or suggestions? Don't hesitate to reach out to [OgnistyPoland](https://github.com/OgnistyPoland).
+Have questions or suggestions? Don't hesitate to reach out to [Ognisty321](https://github.com/Ognisty321).
