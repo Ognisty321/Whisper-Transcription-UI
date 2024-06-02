@@ -33,7 +33,7 @@ This intuitive application simplifies audio and video transcription and translat
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/OgnistyPoland/whisper-transcription-ui.git
+   git clone https://github.com/Ognisty321/whisper-transcription-ui.git
    cd whisper-transcription-ui
    ```
 
