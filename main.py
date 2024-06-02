@@ -16,7 +16,7 @@ AUDIO_VIDEO_FILETYPES = [
     ("All files", "*.*"),
 ]
 SUPPORTED_LANGUAGES = ["English", "Polish", "Japanese", "Spanish"]
-WHISPER_MODELS = ["large-v2", "large-v3", "distil-large-v2", "distil-large-v3"]
+WHISPER_MODELS = ["base", "base.en", "small", "small.en", "medium", "medium.en", "large", "large-v2", "large-v3", "distil-large-v2", "distil-large-v3"]
 TASK_OPTIONS = ["transcribe", "translate"]
 OUTPUT_FORMAT_OPTIONS = ["txt", "vtt", "srt", "tsv", "json", "all"]
 VAD_ALT_METHOD_OPTIONS = ["silero_v3", "silero_v4", "pyannote_v3", "pyannote_onnx_v3", "auditok", "webrtc"]
