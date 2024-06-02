@@ -33,6 +33,7 @@ DEFAULT_VALUES = {
     "best_of": "5",
     "mdx_chunk": "15",
     "mdx_device": "cuda",
+    "exe_path": "" 
 }
 
 CONFIG_FILE = "config.ini"
@@ -58,7 +59,8 @@ def load_config():
             'mdx_chunk': DEFAULT_VALUES['mdx_chunk'],
             'mdx_device': DEFAULT_VALUES['mdx_device'],
             'compute_type': DEFAULT_VALUES['compute_type'],
-            'enable_logging': 'True'
+            'enable_logging': 'True',
+            'exe_path': DEFAULT_VALUES['exe_path'] 
         }
         with open(CONFIG_FILE, 'w') as configfile:
             config.write(configfile)
@@ -173,6 +175,7 @@ def run_transcription(root):
     task = task_var.get()
     output_format = output_format_var.get()
     output_dir = output_dir_entry.get() or "output"
+    exe_path = config.get('Settings', 'exe_path', fallback=DEFAULT_VALUES['exe_path']) or "faster-whisper-xxl.exe"
 
     ff_mdx_kim2 = ff_mdx_kim2_var.get()
     vad_filter = vad_filter_var.get()
@@ -228,7 +231,7 @@ def run_transcription(root):
             filename = file_path
 
         command = [
-            "faster-whisper-xxl.exe",
+            exe_path, 
             filename,
             "--language", language,
             "--model", model,
