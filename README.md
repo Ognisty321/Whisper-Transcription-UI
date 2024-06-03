@@ -1,6 +1,6 @@
 # Whisper Transcription UI
 
-<img src="https://i.imgur.com/TQVmHLk.png" alt="screenshot" width="50%" height="auto"/>
+<img src="https://i.imgur.com/udv3MhH.png" alt="screenshot" width="50%" height="auto"/>
 
 ## Overview
 
