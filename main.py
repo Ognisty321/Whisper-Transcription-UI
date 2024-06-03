@@ -33,7 +33,7 @@ DEFAULT_VALUES = {
     "best_of": "5",
     "mdx_chunk": "15",
     "mdx_device": "cuda",
-    "exe_path": "" 
+    "exe_path": ""
 }
 
 CONFIG_FILE = "config.ini"
@@ -60,7 +60,7 @@ def load_config():
             'mdx_device': DEFAULT_VALUES['mdx_device'],
             'compute_type': DEFAULT_VALUES['compute_type'],
             'enable_logging': 'True',
-            'exe_path': DEFAULT_VALUES['exe_path'] 
+            'exe_path': DEFAULT_VALUES['exe_path']
         }
         with open(CONFIG_FILE, 'w') as configfile:
             config.write(configfile)
@@ -172,13 +172,13 @@ def run_transcription(root):
 
     language = language_var.get()
     if language == "Auto Detect":
-        language = None 
-    
+        language = None
+
     model = model_var.get()
     task = task_var.get()
     output_format = output_format_var.get()
     output_dir = output_dir_entry.get() or "output"
-    exe_path = config.get('Settings', 'exe_path', fallback=DEFAULT_VALUES['exe_path']) or "faster-whisper-xxl.exe" 
+    exe_path = config.get('Settings', 'exe_path', fallback=DEFAULT_VALUES['exe_path']) or "faster-whisper-xxl.exe"
 
     ff_mdx_kim2 = ff_mdx_kim2_var.get()
     vad_filter = vad_filter_var.get()
@@ -245,7 +245,7 @@ def run_transcription(root):
         ]
 
         if language:
-            command.extend(["--language", language]) 
+            command.extend(["--language", language])
 
         if ff_mdx_kim2:
             command.extend(["--ff_mdx_kim2", "--mdx_chunk", str(mdx_chunk), "--mdx_device", mdx_device])
@@ -392,7 +392,7 @@ def create_file_selection_frame(file_frame, root):
     # Create a new frame for manual input
     manual_entry_frame = ttk.Frame(file_frame)
     manual_entry_frame.grid(row=2, column=0, padx=5, pady=5, columnspan=2, sticky="ew")
-    
+
     global file_entry
     file_entry = ttk.Entry(manual_entry_frame, width=70)
     file_entry.grid(row=0, column=0, padx=5, pady=5)
@@ -433,7 +433,7 @@ def create_options_frame(options_frame):
 
     language_var = tk.StringVar(value=config.get('Settings', 'language', fallback=DEFAULT_VALUES['language']))
     language_menu = ttk.OptionMenu(options_frame, language_var, language_var.get(), *SUPPORTED_LANGUAGES)
-    language_menu.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+    language_menu.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
     model_label = ttk.Label(options_frame, text="Model:")
     model_label.grid(row=1, column=0, padx=5, pady=5, sticky="w")
@@ -441,7 +441,7 @@ def create_options_frame(options_frame):
 
     model_var = tk.StringVar(value=config.get('Settings', 'model', fallback=DEFAULT_VALUES['model']))
     model_menu = ttk.OptionMenu(options_frame, model_var, model_var.get(), *WHISPER_MODELS)
-    model_menu.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+    model_menu.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
     task_label = ttk.Label(options_frame, text="Task:")
     task_label.grid(row=2, column=0, padx=5, pady=5, sticky="w")
@@ -449,7 +449,7 @@ def create_options_frame(options_frame):
 
     task_var = tk.StringVar(value=config.get('Settings', 'task', fallback=DEFAULT_VALUES['task']))
     task_menu = ttk.OptionMenu(options_frame, task_var, task_var.get(), *TASK_OPTIONS)
-    task_menu.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+    task_menu.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
     output_format_label = ttk.Label(options_frame, text="Output Format:")
     output_format_label.grid(row=3, column=0, padx=5, pady=5, sticky="w")
@@ -457,7 +457,7 @@ def create_options_frame(options_frame):
 
     output_format_var = tk.StringVar(value=config.get('Settings', 'output_format', fallback=DEFAULT_VALUES['output_format']))
     output_format_menu = ttk.OptionMenu(options_frame, output_format_var, output_format_var.get(), *OUTPUT_FORMAT_OPTIONS)
-    output_format_menu.grid(row=3, column=1, padx=5, pady=5, sticky="w")
+    output_format_menu.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
 
 def create_advanced_options_frame(advanced_options_frame):
     global ff_mdx_kim2_var, vad_filter_var, vad_alt_method_var, word_timestamps_var, compute_type_var
@@ -475,7 +475,7 @@ def create_advanced_options_frame(advanced_options_frame):
 
     vad_alt_method_var = tk.StringVar(value=config.get('Settings', 'vad_alt_method', fallback=DEFAULT_VALUES['vad_alt_method']))
     vad_alt_method_menu = ttk.OptionMenu(advanced_options_frame, vad_alt_method_var, vad_alt_method_var.get(), *VAD_ALT_METHOD_OPTIONS)
-    vad_alt_method_menu.grid(row=1, column=1, sticky="w")
+    vad_alt_method_menu.grid(row=1, column=1, sticky="ew")
     CreateToolTip(vad_alt_method_menu, "Select the alternative VAD method to use.")
 
     word_timestamps_var = tk.BooleanVar(value=config.getboolean('Settings', 'word_timestamps', fallback=True))
@@ -489,14 +489,14 @@ def create_advanced_options_frame(advanced_options_frame):
 
     compute_type_var = tk.StringVar(value=config.get('Settings', 'compute_type', fallback=DEFAULT_VALUES['compute_type']))
     compute_type_menu = ttk.OptionMenu(advanced_options_frame, compute_type_var, compute_type_var.get(), *COMPUTE_TYPE_OPTIONS)
-    compute_type_menu.grid(row=3, column=1, sticky="w")
+    compute_type_menu.grid(row=3, column=1, sticky="ew")
 
     temperature_label = ttk.Label(advanced_options_frame, text="Temperature:")
     temperature_label.grid(row=4, column=0, sticky="w")
     CreateToolTip(temperature_label, "Set the temperature for sampling.")
 
     temperature_entry = ttk.Entry(advanced_options_frame, width=5)
-    temperature_entry.grid(row=4, column=1, sticky="w")
+    temperature_entry.grid(row=4, column=1, sticky="ew")
     temperature_entry.insert(0, config.get('Settings', 'temperature', fallback=DEFAULT_VALUES['temperature']))
 
     beam_size_label = ttk.Label(advanced_options_frame, text="Beam Size:")
@@ -504,7 +504,7 @@ def create_advanced_options_frame(advanced_options_frame):
     CreateToolTip(beam_size_label, "Set the beam size for beam search.")
 
     beam_size_entry = ttk.Entry(advanced_options_frame, width=5)
-    beam_size_entry.grid(row=5, column=1, sticky="w")
+    beam_size_entry.grid(row=5, column=1, sticky="ew")
     beam_size_entry.insert(0, config.get('Settings', 'beam_size', fallback=DEFAULT_VALUES['beam_size']))
 
     best_of_label = ttk.Label(advanced_options_frame, text="Best Of:")
@@ -512,7 +512,7 @@ def create_advanced_options_frame(advanced_options_frame):
     CreateToolTip(best_of_label, "Set the number of candidates when sampling with non-zero temperature.")
 
     best_of_entry = ttk.Entry(advanced_options_frame, width=5)
-    best_of_entry.grid(row=6, column=1, sticky="w")
+    best_of_entry.grid(row=6, column=1, sticky="ew")
     best_of_entry.insert(0, config.get('Settings', 'best_of', fallback=DEFAULT_VALUES['best_of']))
 
     mdx_chunk_label = ttk.Label(advanced_options_frame, text="MDX Chunk (seconds):")
@@ -520,7 +520,7 @@ def create_advanced_options_frame(advanced_options_frame):
     CreateToolTip(mdx_chunk_label, "Chunk size in seconds for MDX-Net filter. Smaller uses less memory, but can be slower and produce slightly lower quality.")
 
     mdx_chunk_entry = ttk.Entry(advanced_options_frame, width=5)
-    mdx_chunk_entry.grid(row=7, column=1, sticky="w")
+    mdx_chunk_entry.grid(row=7, column=1, sticky="ew")
     mdx_chunk_entry.insert(0, config.get('Settings', 'mdx_chunk', fallback=DEFAULT_VALUES['mdx_chunk']))
 
     mdx_device_label = ttk.Label(advanced_options_frame, text="MDX Device:")
@@ -529,7 +529,7 @@ def create_advanced_options_frame(advanced_options_frame):
 
     mdx_device_var = tk.StringVar(value=config.get('Settings', 'mdx_device', fallback=DEFAULT_VALUES['mdx_device']))
     mdx_device_entry = ttk.Entry(advanced_options_frame, textvariable=mdx_device_var, width=10)
-    mdx_device_entry.grid(row=8, column=1, sticky="w")
+    mdx_device_entry.grid(row=8, column=1, sticky="ew")
 
     global enable_logging_var
     enable_logging_var = tk.BooleanVar(value=config.getboolean('Settings', 'enable_logging', fallback=True))
@@ -542,7 +542,7 @@ def create_progress_frame(progress_frame):
 
     progress_var = tk.DoubleVar()
     progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, length=400)
-    progress_bar.grid(row=0, column=0, padx=10, pady=10)
+    progress_bar.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
     progress_label = ttk.Label(progress_frame, text="Progress: 0/0")
     progress_label.grid(row=0, column=1, padx=5, pady=10)
