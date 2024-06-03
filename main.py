@@ -82,6 +82,7 @@ def save_config():
     config['Settings']['mdx_device'] = mdx_device_var.get()
     config['Settings']['compute_type'] = compute_type_var.get()
     config['Settings']['enable_logging'] = str(enable_logging_var.get())
+    config['Settings']['sentence'] = str(sentence_var.get())
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
 
@@ -184,6 +185,7 @@ def run_transcription(root):
     vad_filter = vad_filter_var.get()
     vad_alt_method = vad_alt_method_var.get() if vad_filter else ""
     word_timestamps = word_timestamps_var.get()
+    sentence = sentence_var.get()
 
     temperature = temperature_entry.get()
     if not validate_numeric_input(temperature, 0.0, 1.0):
@@ -240,30 +242,25 @@ def run_transcription(root):
             task_option,
             "--output_dir", output_dir,
             "--output_format", output_format,
-            "--sentence",
             "--compute_type", compute_type,
         ]
 
         if language:
             command.extend(["--language", language])
-
         if ff_mdx_kim2:
             command.extend(["--ff_mdx_kim2", "--mdx_chunk", str(mdx_chunk), "--mdx_device", mdx_device])
-
         if vad_filter:
             command.extend(["--vad_filter", str(vad_filter)])
             if vad_alt_method:
                 command.extend(["--vad_alt_method", vad_alt_method])
-
         if word_timestamps:
             command.extend(["--word_timestamps", str(word_timestamps)])
-
+        if sentence:
+            command.extend(["--sentence"])
         if temperature is not None:
             command.extend(["--temperature", str(temperature)])
-
         if beam_size is not None:
             command.extend(["--beam_size", str(beam_size)])
-
         if best_of is not None:
             command.extend(["--best_of", str(best_of)])
 
@@ -281,6 +278,7 @@ def run_transcription(root):
             logging.info(f"  VAD Filter: {vad_filter}")
             logging.info(f"  VAD Alternative Method: {vad_alt_method}")
             logging.info(f"  Word Timestamps: {word_timestamps}")
+            logging.info(f"  Sentence Split: {sentence}")
             logging.info(f"  Temperature: {temperature}")
             logging.info(f"  Beam Size: {beam_size}")
             logging.info(f"  Best Of: {best_of}")
@@ -459,82 +457,88 @@ def create_options_frame(options_frame):
     output_format_menu = ttk.OptionMenu(options_frame, output_format_var, output_format_var.get(), *OUTPUT_FORMAT_OPTIONS)
     output_format_menu.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
 
-def create_advanced_options_frame(advanced_options_frame):
-    global ff_mdx_kim2_var, vad_filter_var, vad_alt_method_var, word_timestamps_var, compute_type_var
+def create_advanced_options_frame(advanced_options_frame): 
+    global ff_mdx_kim2_var, vad_filter_var, vad_alt_method_var, word_timestamps_var, sentence_var, compute_type_var
     global temperature_entry, beam_size_entry, best_of_entry, mdx_chunk_entry, mdx_device_var
 
     ff_mdx_kim2_var = tk.BooleanVar(value=config.getboolean('Settings', 'ff_mdx_kim2', fallback=True))
     ff_mdx_kim2_checkbox = ttk.Checkbutton(advanced_options_frame, text="Enable FF MDX Kim2", variable=ff_mdx_kim2_var)
-    ff_mdx_kim2_checkbox.grid(row=0, column=0, sticky="w")
+    ff_mdx_kim2_checkbox.grid(row=0, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(ff_mdx_kim2_checkbox, "Enable high-quality vocals extraction using MDX-Net 'Kim_Vocal_2' model.")
 
     vad_filter_var = tk.BooleanVar(value=config.getboolean('Settings', 'vad_filter', fallback=True))
     vad_filter_checkbox = ttk.Checkbutton(advanced_options_frame, text="Enable VAD Filter", variable=vad_filter_var)
-    vad_filter_checkbox.grid(row=1, column=0, sticky="w")
+    vad_filter_checkbox.grid(row=1, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(vad_filter_checkbox, "Enable the Voice Activity Detection (VAD) filter.")
 
     vad_alt_method_var = tk.StringVar(value=config.get('Settings', 'vad_alt_method', fallback=DEFAULT_VALUES['vad_alt_method']))
     vad_alt_method_menu = ttk.OptionMenu(advanced_options_frame, vad_alt_method_var, vad_alt_method_var.get(), *VAD_ALT_METHOD_OPTIONS)
-    vad_alt_method_menu.grid(row=1, column=1, sticky="ew")
+    vad_alt_method_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
     CreateToolTip(vad_alt_method_menu, "Select the alternative VAD method to use.")
 
     word_timestamps_var = tk.BooleanVar(value=config.getboolean('Settings', 'word_timestamps', fallback=True))
     word_timestamps_checkbox = ttk.Checkbutton(advanced_options_frame, text="Enable Word Timestamps", variable=word_timestamps_var)
-    word_timestamps_checkbox.grid(row=2, column=0, sticky="w")
+    word_timestamps_checkbox.grid(row=2, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(word_timestamps_checkbox, "Extract word-level timestamps.")
+    
+    # Adding the sentence option
+    sentence_var = tk.BooleanVar(value=config.getboolean('Settings', 'sentence', fallback=False))
+    sentence_checkbox = ttk.Checkbutton(advanced_options_frame, text="Split Lines into Sentences", variable=sentence_var)
+    sentence_checkbox.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
+    CreateToolTip(sentence_checkbox, "Enable splitting lines into sentences for output.")
 
     compute_type_label = ttk.Label(advanced_options_frame, text="Compute Type:")
-    compute_type_label.grid(row=3, column=0, sticky="w")
+    compute_type_label.grid(row=3, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(compute_type_label, "Type of quantization to use (see https://opennmt.net/CTranslate2/quantization.html).")
 
     compute_type_var = tk.StringVar(value=config.get('Settings', 'compute_type', fallback=DEFAULT_VALUES['compute_type']))
     compute_type_menu = ttk.OptionMenu(advanced_options_frame, compute_type_var, compute_type_var.get(), *COMPUTE_TYPE_OPTIONS)
-    compute_type_menu.grid(row=3, column=1, sticky="ew")
+    compute_type_menu.grid(row=3, column=1, sticky="ew", padx=5, pady=5)
 
     temperature_label = ttk.Label(advanced_options_frame, text="Temperature:")
-    temperature_label.grid(row=4, column=0, sticky="w")
+    temperature_label.grid(row=4, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(temperature_label, "Set the temperature for sampling.")
 
     temperature_entry = ttk.Entry(advanced_options_frame, width=5)
-    temperature_entry.grid(row=4, column=1, sticky="ew")
+    temperature_entry.grid(row=4, column=1, sticky="ew", padx=5, pady=5)
     temperature_entry.insert(0, config.get('Settings', 'temperature', fallback=DEFAULT_VALUES['temperature']))
 
     beam_size_label = ttk.Label(advanced_options_frame, text="Beam Size:")
-    beam_size_label.grid(row=5, column=0, sticky="w")
+    beam_size_label.grid(row=5, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(beam_size_label, "Set the beam size for beam search.")
 
     beam_size_entry = ttk.Entry(advanced_options_frame, width=5)
-    beam_size_entry.grid(row=5, column=1, sticky="ew")
+    beam_size_entry.grid(row=5, column=1, sticky="ew", padx=5, pady=5)
     beam_size_entry.insert(0, config.get('Settings', 'beam_size', fallback=DEFAULT_VALUES['beam_size']))
 
     best_of_label = ttk.Label(advanced_options_frame, text="Best Of:")
-    best_of_label.grid(row=6, column=0, sticky="w")
+    best_of_label.grid(row=6, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(best_of_label, "Set the number of candidates when sampling with non-zero temperature.")
 
     best_of_entry = ttk.Entry(advanced_options_frame, width=5)
-    best_of_entry.grid(row=6, column=1, sticky="ew")
+    best_of_entry.grid(row=6, column=1, sticky="ew", padx=5, pady=5)
     best_of_entry.insert(0, config.get('Settings', 'best_of', fallback=DEFAULT_VALUES['best_of']))
 
     mdx_chunk_label = ttk.Label(advanced_options_frame, text="MDX Chunk (seconds):")
-    mdx_chunk_label.grid(row=7, column=0, sticky="w")
+    mdx_chunk_label.grid(row=7, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(mdx_chunk_label, "Chunk size in seconds for MDX-Net filter. Smaller uses less memory, but can be slower and produce slightly lower quality.")
 
     mdx_chunk_entry = ttk.Entry(advanced_options_frame, width=5)
-    mdx_chunk_entry.grid(row=7, column=1, sticky="ew")
+    mdx_chunk_entry.grid(row=7, column=1, sticky="ew", padx=5, pady=5)
     mdx_chunk_entry.insert(0, config.get('Settings', 'mdx_chunk', fallback=DEFAULT_VALUES['mdx_chunk']))
 
     mdx_device_label = ttk.Label(advanced_options_frame, text="MDX Device:")
-    mdx_device_label.grid(row=8, column=0, sticky="w")
+    mdx_device_label.grid(row=8, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(mdx_device_label, "Device to use for MDX-Net filter. Default is 'cuda' if CUDA device is detected, else is 'cpu'. If CUDA GPU is a second device then set 'cuda:1'.")
 
     mdx_device_var = tk.StringVar(value=config.get('Settings', 'mdx_device', fallback=DEFAULT_VALUES['mdx_device']))
     mdx_device_entry = ttk.Entry(advanced_options_frame, textvariable=mdx_device_var, width=10)
-    mdx_device_entry.grid(row=8, column=1, sticky="ew")
+    mdx_device_entry.grid(row=8, column=1, sticky="ew", padx=5, pady=5)
 
     global enable_logging_var
     enable_logging_var = tk.BooleanVar(value=config.getboolean('Settings', 'enable_logging', fallback=True))
     enable_logging_checkbox = ttk.Checkbutton(advanced_options_frame, text="Enable Logging", variable=enable_logging_var)
-    enable_logging_checkbox.grid(row=9, column=0, sticky="w")
+    enable_logging_checkbox.grid(row=9, column=0, sticky="w", padx=5, pady=5)
     CreateToolTip(enable_logging_checkbox, "Enable logging of transcription process and errors.")
 
 def create_progress_frame(progress_frame):
