@@ -39,7 +39,7 @@ This intuitive application simplifies audio and video transcription and translat
 
 2. Install required packages:
    ```bash
-   pip install tkinterdnd2 ttkbootstrap yt-dlp
+   pip install PyQt6 yt-dlp
    ```
 
 3. Launch the application:
