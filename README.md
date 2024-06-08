@@ -29,7 +29,7 @@ This intuitive application simplifies audio and video transcription and translat
 - **[Whisper Standalone](https://github.com/Purfview/whisper-standalone-win/releases):** Download and install the latest release.
 - **Python 3.x**
 
-### Installation
+## Installation
 
 1. Clone the repository:
    ```bash
@@ -42,7 +42,16 @@ This intuitive application simplifies audio and video transcription and translat
    pip install PyQt6 yt-dlp
    ```
 
-3. Launch the application:
+3. Ensure `faster-whisper-xxl.exe` is available:
+   - **Option 1**: Place `faster-whisper-xxl.exe` in the same directory as `main.py`.
+   - **Option 2**: Specify the path to `faster-whisper-xxl.exe` in the `config.ini` file:
+
+     ```ini
+     [Settings]
+     exe_path = path/to/faster-whisper-xxl.exe
+     ```
+
+4. Launch the application:
    ```bash
    python main.py
    ```
