@@ -258,6 +258,9 @@ class TranscriptionWorker(QThread):
         task_option = f"--task {task}" if task != "transcribe" else ""
 
         total_files = len(self.file_list)
+        
+        if total_files > 0:
+            self.progress_updated.emit(0, f"Progress: 0/{total_files}")
 
         for index, file_path in enumerate(self.file_list, start=1):
             if file_path.startswith(("http://", "https://")):
@@ -583,9 +586,16 @@ class MainWindow(QWidget):
         QMessageBox.information(self, "Success", "Transcription completed for all files!")
         if enable_logging():
             logging.info("Transcription completed for all files.")
+        self.reset_progress()
 
     def show_error_message(self, error_message):
         QMessageBox.critical(self, "Error", error_message)
+        logging.error(error_message)
+        self.reset_progress()
+
+    def reset_progress(self):
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Progress: 0/0")
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
