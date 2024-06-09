@@ -96,7 +96,8 @@ def load_config():
             'compute_type': DEFAULT_VALUES['compute_type'],
             'enable_logging': 'True',
             'exe_path': DEFAULT_VALUES['exe_path'],
-            'sentence': 'False'  # Add sentence split option to config
+            'sentence': 'False',  
+            'window_geometry': ''
         }
         with open(CONFIG_FILE, 'w') as configfile:
             config.write(configfile)
@@ -119,17 +120,16 @@ def save_config(widget_dict):
     config['Settings']['mdx_device'] = widget_dict['mdx_device'].text()
     config['Settings']['compute_type'] = widget_dict['compute_type'].currentText()
     config['Settings']['enable_logging'] = str(widget_dict['enable_logging'].isChecked())
-    config['Settings']['sentence'] = str(widget_dict['sentence'].isChecked())  # Save sentence split option
+    config['Settings']['sentence'] = str(widget_dict['sentence'].isChecked()) 
+    config['Settings']['window_geometry'] = base64.b64encode(self.saveGeometry()).decode('utf-8')
 
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
-
 
 load_config()
 
 logging.basicConfig(filename='transcription.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
-
 
 def enable_logging():
     return config.getboolean('Settings', 'enable_logging', fallback=True)
@@ -140,14 +140,12 @@ def validate_file_extension(filename):
                         '.mkv', '.avi', '.webm')
     return any(filename.lower().endswith(ext) for ext in valid_extensions)
 
-
 def validate_numeric_input(value, min_value, max_value):
     try:
         numeric_value = float(value)
         return min_value <= numeric_value <= max_value
     except ValueError:
         return False
-
 
 def download_audio(url):
     output_dir = "downloads"
@@ -183,7 +181,6 @@ def download_audio(url):
         logging.info(f"Downloaded file location: {output_filename}")
 
     return output_filename
-
 
 class TranscriptionWorker(QThread):
     progress_updated = pyqtSignal(int, str)
@@ -397,6 +394,21 @@ class MainWindow(QWidget):
         self.load_settings()
 
         self.setAcceptDrops(True)
+        self.load_window_geometry()
+
+    def closeEvent(self, event):
+        self.save_window_geometry()
+        event.accept()
+
+    def load_window_geometry(self):
+        geometry = config.get('Settings', 'window_geometry', fallback='')
+        if geometry:
+            self.restoreGeometry(base64.b64decode(geometry))
+
+    def save_window_geometry(self):
+        config['Settings']['window_geometry'] = base64.b64encode(self.saveGeometry()).decode('utf-8')
+        with open(CONFIG_FILE, 'w') as configfile:
+            config.write(configfile)
 
     def create_widgets(self):
         self.file_list_widget = QListWidget()
