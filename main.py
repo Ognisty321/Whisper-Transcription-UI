@@ -320,8 +320,7 @@ class TranscriptionWorker(QThread):
                 logging.info(f"  Output Directory: {output_dir}")
                 logging.info(f"  FF MDX Kim2: {ff_mdx_kim2}")
                 logging.info(f"  VAD Filter: {vad_filter}")
-                logging.info(
-                    f"  VAD Alternative Method: {vad_alt_method}")
+                logging.info(f"  VAD Alternative Method: {vad_alt_method}")
                 logging.info(f"  Word Timestamps: {word_timestamps}")
                 logging.info(f"  Sentence Split: {sentence}")
                 logging.info(f"  Temperature: {temperature}")
@@ -350,6 +349,37 @@ class TranscriptionWorker(QThread):
 
         self.finished.emit()
 
+class Expander(QWidget):
+    def __init__(self, label, target):
+        super().__init__()
+        self.label = label
+        self.target = target
+        self.collapsed = True
+        self.init_ui()
+        self.target.setVisible(False)
+        self.update_header_label()
+
+    def init_ui(self):
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.header = QLabel()
+        self.header.setStyleSheet("QLabel {font-weight: bold;}")
+        self.header.mouseReleaseEvent = self.expand_collapse
+        self.layout.addWidget(self.header)
+        self.layout.addWidget(self.target)
+        self.setLayout(self.layout)
+        self.update_header_label()
+
+    def expand_collapse(self, event):
+        self.collapsed = not self.collapsed
+        self.target.setVisible(not self.collapsed)
+        self.update_header_label()
+
+    def update_header_label(self):
+        if self.collapsed:
+            self.header.setText(self.label + " ▼")
+        else:
+            self.header.setText(self.label + " ▲")
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -357,12 +387,8 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("Whisper Transcription App")
         self.resize(450, 800)
-
-        # Decode the Base64 string to binary data
         pixmap = QPixmap()
         pixmap.loadFromData(base64.b64decode(base64_icon))
-
-        # Set the window icon
         self.setWindowIcon(QIcon(pixmap))
 
         self.widget_dict = {}
@@ -370,14 +396,11 @@ class MainWindow(QWidget):
         self.create_layout()
         self.load_settings()
 
-        # Enable Drag and Drop
         self.setAcceptDrops(True)
 
     def create_widgets(self):
-        # File Selection
         self.file_list_widget = QListWidget()
-        self.file_list_widget.setSelectionMode(
-            QListWidget.SelectionMode.ExtendedSelection)
+        self.file_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.browse_button = QPushButton("Browse")
         self.browse_button.clicked.connect(self.browse_files)
         self.clear_button = QPushButton("Clear")
@@ -387,7 +410,6 @@ class MainWindow(QWidget):
         self.add_file_button = QPushButton("Add")
         self.add_file_button.clicked.connect(self.add_file_from_entry)
 
-        # Transcription Options
         self.widget_dict['language'] = QComboBox()
         self.widget_dict['language'].addItems(SUPPORTED_LANGUAGES)
         self.widget_dict['model'] = QComboBox()
@@ -398,18 +420,14 @@ class MainWindow(QWidget):
         self.widget_dict['output_format'].addItems(OUTPUT_FORMAT_OPTIONS)
         self.widget_dict['output_dir'] = QLineEdit()
         self.browse_output_dir_button = QPushButton("Browse")
-        self.browse_output_dir_button.clicked.connect(
-            self.browse_output_dir)
+        self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
 
-        # Advanced Options
-        self.widget_dict['ff_mdx_kim2'] = QCheckBox(
-            "Enable FF MDX Kim2")
+        self.widget_dict['ff_mdx_kim2'] = QCheckBox("Enable FF MDX Kim2")
         self.widget_dict['vad_filter'] = QCheckBox("Enable VAD Filter")
         self.widget_dict['vad_alt_method'] = QComboBox()
         self.widget_dict['vad_alt_method'].addItems(VAD_ALT_METHOD_OPTIONS)
-        self.widget_dict['word_timestamps'] = QCheckBox(
-            "Enable Word Timestamps")
-        self.widget_dict['sentence'] = QCheckBox("Split Lines into Sentences")  # Sentence Split checkbox
+        self.widget_dict['word_timestamps'] = QCheckBox("Enable Word Timestamps")
+        self.widget_dict['sentence'] = QCheckBox("Split Lines into Sentences")
         self.widget_dict['compute_type'] = QComboBox()
         self.widget_dict['compute_type'].addItems(COMPUTE_TYPE_OPTIONS)
         self.widget_dict['temperature'] = QLineEdit()
@@ -419,24 +437,19 @@ class MainWindow(QWidget):
         self.widget_dict['mdx_device'] = QLineEdit()
         self.widget_dict['enable_logging'] = QCheckBox("Enable Logging")
 
-        # Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_label = QLabel("Progress: 0/0")
 
-        # Buttons
         self.transcribe_button = QPushButton("Transcribe")
         self.transcribe_button.clicked.connect(self.start_transcription)
         self.save_button = QPushButton("Save Settings")
-        self.save_button.clicked.connect(
-            lambda: save_config(self.widget_dict))
+        self.save_button.clicked.connect(lambda: save_config(self.widget_dict))
 
     def create_layout(self):
         main_layout = QVBoxLayout()
 
-        # File Selection
         file_selection_layout = QGridLayout()
-        file_selection_layout.addWidget(
-            QLabel("Audio/Video Files:"), 0, 0, 1, 2)
+        file_selection_layout.addWidget(QLabel("Audio/Video Files:"), 0, 0, 1, 2)
         file_selection_layout.addWidget(self.file_list_widget, 1, 0, 1, 2)
         file_selection_layout.addWidget(self.file_entry, 2, 0)
         file_selection_layout.addWidget(self.add_file_button, 2, 1)
@@ -444,7 +457,6 @@ class MainWindow(QWidget):
         file_selection_layout.addWidget(self.clear_button, 3, 1)
         main_layout.addLayout(file_selection_layout)
 
-        # Options Group Box
         options_group_box = QGroupBox("Transcription Options")
         options_layout = QGridLayout()
         options_layout.addWidget(QLabel("Language:"), 0, 0)
@@ -461,51 +473,35 @@ class MainWindow(QWidget):
         options_group_box.setLayout(options_layout)
         main_layout.addWidget(options_group_box)
 
-        # Advanced Options Group Box
-        advanced_options_group_box = QGroupBox("Advanced Options")
         advanced_options_layout = QGridLayout()
-        advanced_options_layout.addWidget(
-            self.widget_dict['ff_mdx_kim2'], 0, 0, 1, 2)
-        advanced_options_layout.addWidget(
-            self.widget_dict['vad_filter'], 1, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['vad_alt_method'], 1, 1)
-        advanced_options_layout.addWidget(
-            self.widget_dict['word_timestamps'], 2, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['sentence'], 2, 1)  # Add sentence split to layout
-        advanced_options_layout.addWidget(
-            QLabel("Compute Type:"), 3, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['compute_type'], 3, 1)
+        advanced_options_layout.addWidget(self.widget_dict['ff_mdx_kim2'], 0, 0, 1, 2)
+        advanced_options_layout.addWidget(self.widget_dict['vad_filter'], 1, 0)
+        advanced_options_layout.addWidget(self.widget_dict['vad_alt_method'], 1, 1)
+        advanced_options_layout.addWidget(self.widget_dict['word_timestamps'], 2, 0)
+        advanced_options_layout.addWidget(self.widget_dict['sentence'], 2, 1)
+        advanced_options_layout.addWidget(QLabel("Compute Type:"), 3, 0)
+        advanced_options_layout.addWidget(self.widget_dict['compute_type'], 3, 1)
         advanced_options_layout.addWidget(QLabel("Temperature:"), 4, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['temperature'], 4, 1)
+        advanced_options_layout.addWidget(self.widget_dict['temperature'], 4, 1)
         advanced_options_layout.addWidget(QLabel("Beam Size:"), 5, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['beam_size'], 5, 1)
+        advanced_options_layout.addWidget(self.widget_dict['beam_size'], 5, 1)
         advanced_options_layout.addWidget(QLabel("Best Of:"), 6, 0)
         advanced_options_layout.addWidget(self.widget_dict['best_of'], 6, 1)
-        advanced_options_layout.addWidget(
-            QLabel("MDX Chunk (seconds):"), 7, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['mdx_chunk'], 7, 1)
+        advanced_options_layout.addWidget(QLabel("MDX Chunk (seconds):"), 7, 0)
+        advanced_options_layout.addWidget(self.widget_dict['mdx_chunk'], 7, 1)
         advanced_options_layout.addWidget(QLabel("MDX Device:"), 8, 0)
-        advanced_options_layout.addWidget(
-            self.widget_dict['mdx_device'], 8, 1)
-        advanced_options_layout.addWidget(
-            self.widget_dict['enable_logging'], 9, 0, 1, 2)
-        advanced_options_group_box.setLayout(advanced_options_layout)
+        advanced_options_layout.addWidget(self.widget_dict['mdx_device'], 8, 1)
+        advanced_options_layout.addWidget(self.widget_dict['enable_logging'], 9, 0, 1, 2)
 
-        main_layout.addWidget(advanced_options_group_box)
+        advanced_section = Expander("Advanced Options", QWidget())
+        advanced_section.target.setLayout(advanced_options_layout)
+        main_layout.addWidget(advanced_section)
 
-        # Progress Bar
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_bar)
         progress_layout.addWidget(self.progress_label)
         main_layout.addLayout(progress_layout)
 
-        # Buttons
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.transcribe_button)
         button_layout.addWidget(self.save_button)
@@ -515,15 +511,12 @@ class MainWindow(QWidget):
 
     def browse_files(self):
         filenames, _ = QFileDialog.getOpenFileNames(
-            self, "Select Audio/Video Files", "/", " ".join(
-                [f"{desc} ({exts})" for desc, exts in AUDIO_VIDEO_FILETYPES])
+            self, "Select Audio/Video Files", "/", " ".join([f"{desc} ({exts})" for desc, exts in AUDIO_VIDEO_FILETYPES])
         )
         self.file_list_widget.addItems(filenames)
 
     def browse_output_dir(self):
-        directory = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory"
-        )
+        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         self.widget_dict['output_dir'].setText(directory)
 
     def add_file_from_entry(self):
@@ -533,8 +526,7 @@ class MainWindow(QWidget):
                 self.file_list_widget.addItem(file_path)
                 self.file_entry.clear()
             else:
-                QMessageBox.warning(self, "Error",
-                                    f"Invalid file path or unsupported file extension: {file_path}")
+                QMessageBox.warning(self, "Error", f"Invalid file path or unsupported file extension: {file_path}")
         else:
             QMessageBox.warning(self, "Error", "Input cannot be empty.")
 
@@ -542,52 +534,31 @@ class MainWindow(QWidget):
         self.file_list_widget.clear()
 
     def load_settings(self):
-        self.widget_dict['language'].setCurrentText(
-            config.get('Settings', 'language', fallback=DEFAULT_VALUES['language']))
-        self.widget_dict['model'].setCurrentText(
-            config.get('Settings', 'model', fallback=DEFAULT_VALUES['model']))
-        self.widget_dict['task'].setCurrentText(
-            config.get('Settings', 'task', fallback=DEFAULT_VALUES['task']))
-        self.widget_dict['output_format'].setCurrentText(
-            config.get('Settings', 'output_format', fallback=DEFAULT_VALUES['output_format']))
-        self.widget_dict['output_dir'].setText(
-            config.get('Settings', 'output_dir', fallback=''))
-        self.widget_dict['ff_mdx_kim2'].setChecked(
-            config.getboolean('Settings', 'ff_mdx_kim2', fallback=True))
-        self.widget_dict['vad_filter'].setChecked(
-            config.getboolean('Settings', 'vad_filter', fallback=True))
-        self.widget_dict['vad_alt_method'].setCurrentText(
-            config.get('Settings', 'vad_alt_method', fallback=DEFAULT_VALUES['vad_alt_method']))
-        self.widget_dict['word_timestamps'].setChecked(
-            config.getboolean('Settings', 'word_timestamps', fallback=True))
-        self.widget_dict['temperature'].setText(
-            config.get('Settings', 'temperature', fallback=DEFAULT_VALUES['temperature']))
-        self.widget_dict['beam_size'].setText(
-            config.get('Settings', 'beam_size', fallback=DEFAULT_VALUES['beam_size']))
-        self.widget_dict['best_of'].setText(
-            config.get('Settings', 'best_of', fallback=DEFAULT_VALUES['best_of']))
-        self.widget_dict['mdx_chunk'].setText(
-            config.get('Settings', 'mdx_chunk', fallback=DEFAULT_VALUES['mdx_chunk']))
-        self.widget_dict['mdx_device'].setText(
-            config.get('Settings', 'mdx_device', fallback=DEFAULT_VALUES['mdx_device']))
-        self.widget_dict['compute_type'].setCurrentText(
-            config.get('Settings', 'compute_type', fallback=DEFAULT_VALUES['compute_type']))
-        self.widget_dict['enable_logging'].setChecked(
-            config.getboolean('Settings', 'enable_logging', fallback=True))
-        self.widget_dict['sentence'].setChecked(
-            config.getboolean('Settings', 'sentence', fallback=False))  # Load sentence split option
+        self.widget_dict['language'].setCurrentText(config.get('Settings', 'language', fallback=DEFAULT_VALUES['language']))
+        self.widget_dict['model'].setCurrentText(config.get('Settings', 'model', fallback=DEFAULT_VALUES['model']))
+        self.widget_dict['task'].setCurrentText(config.get('Settings', 'task', fallback=DEFAULT_VALUES['task']))
+        self.widget_dict['output_format'].setCurrentText(config.get('Settings', 'output_format', fallback=DEFAULT_VALUES['output_format']))
+        self.widget_dict['output_dir'].setText(config.get('Settings', 'output_dir', fallback=''))
+        self.widget_dict['ff_mdx_kim2'].setChecked(config.getboolean('Settings', 'ff_mdx_kim2', fallback=True))
+        self.widget_dict['vad_filter'].setChecked(config.getboolean('Settings', 'vad_filter', fallback=True))
+        self.widget_dict['vad_alt_method'].setCurrentText(config.get('Settings', 'vad_alt_method', fallback=DEFAULT_VALUES['vad_alt_method']))
+        self.widget_dict['word_timestamps'].setChecked(config.getboolean('Settings', 'word_timestamps', fallback=True))
+        self.widget_dict['temperature'].setText(config.get('Settings', 'temperature', fallback=DEFAULT_VALUES['temperature']))
+        self.widget_dict['beam_size'].setText(config.get('Settings', 'beam_size', fallback=DEFAULT_VALUES['beam_size']))
+        self.widget_dict['best_of'].setText(config.get('Settings', 'best_of', fallback=DEFAULT_VALUES['best_of']))
+        self.widget_dict['mdx_chunk'].setText(config.get('Settings', 'mdx_chunk', fallback=DEFAULT_VALUES['mdx_chunk']))
+        self.widget_dict['mdx_device'].setText(config.get('Settings', 'mdx_device', fallback=DEFAULT_VALUES['mdx_device']))
+        self.widget_dict['compute_type'].setCurrentText(config.get('Settings', 'compute_type', fallback=DEFAULT_VALUES['compute_type']))
+        self.widget_dict['enable_logging'].setChecked(config.getboolean('Settings', 'enable_logging', fallback=True))
+        self.widget_dict['sentence'].setChecked(config.getboolean('Settings', 'sentence', fallback=False))  # Load sentence split option
 
     def start_transcription(self):
-        file_list = [self.file_list_widget.item(
-            i).text() for i in range(self.file_list_widget.count())]
+        file_list = [self.file_list_widget.item(i).text() for i in range(self.file_list_widget.count())]
 
-        self.transcription_worker = TranscriptionWorker(
-            file_list, self.widget_dict)
-        self.transcription_worker.progress_updated.connect(
-            self.update_progress)
+        self.transcription_worker = TranscriptionWorker(file_list, self.widget_dict)
+        self.transcription_worker.progress_updated.connect(self.update_progress)
         self.transcription_worker.finished.connect(self.transcription_finished)
-        self.transcription_worker.error_occurred.connect(
-            self.show_error_message)
+        self.transcription_worker.error_occurred.connect(self.show_error_message)
         self.transcription_worker.start()
 
     def update_progress(self, progress, message):
@@ -595,8 +566,7 @@ class MainWindow(QWidget):
         self.progress_label.setText(message)
 
     def transcription_finished(self):
-        QMessageBox.information(
-            self, "Success", "Transcription completed for all files!")
+        QMessageBox.information(self, "Success", "Transcription completed for all files!")
         if enable_logging():
             logging.info("Transcription completed for all files.")
 
@@ -619,17 +589,11 @@ class MainWindow(QWidget):
         else:
             event.ignore()
 
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-
-    # Decode the Base64 string to binary data
     pixmap = QPixmap()
     pixmap.loadFromData(base64.b64decode(base64_icon))
-
-    # Set the application icon
     app.setWindowIcon(QIcon(pixmap))
-
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
