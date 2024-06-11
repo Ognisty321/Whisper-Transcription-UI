@@ -23,7 +23,8 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QStyleFactory,
-    QMessageBox
+    QMessageBox,
+    QFormLayout
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QByteArray
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QPixmap
@@ -45,11 +46,11 @@ AUDIO_VIDEO_FILETYPES = [
 ]
 SUPPORTED_LANGUAGES = ["Auto Detect", "English", "Polish", "Japanese", "Spanish"]
 WHISPER_MODELS = ["base", "base.en", "small", "small.en", "medium", "medium.en",
-                 "large", "large-v2", "large-v3", "distil-large-v2", "distil-large-v3"]
+                  "large", "large-v2", "large-v3", "distil-large-v2", "distil-large-v3"]
 TASK_OPTIONS = ["transcribe", "translate"]
 OUTPUT_FORMAT_OPTIONS = ["txt", "vtt", "srt", "tsv", "json", "all"]
 VAD_ALT_METHOD_OPTIONS = ["silero_v3", "silero_v4", "pyannote_v3",
-                            "pyannote_onnx_v3", "auditok", "webrtc"]
+                          "pyannote_onnx_v3", "auditok", "webrtc"]
 COMPUTE_TYPE_OPTIONS = ["default", "auto", "int8", "int8_float16",
                         "int8_float32", "int8_bfloat16", "int16", "float16",
                         "float32", "bfloat16"]
@@ -70,70 +71,80 @@ DEFAULT_VALUES = {
 }
 
 CONFIG_FILE = "config.ini"
-config = configparser.ConfigParser()
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        config.read(CONFIG_FILE)
-    else:
-        config['Settings'] = {
-            'language': DEFAULT_VALUES['language'],
-            'model': DEFAULT_VALUES['model'],
-            'task': DEFAULT_VALUES['task'],
-            'output_format': DEFAULT_VALUES['output_format'],
-            'output_dir': '',
-            'vad_filter': 'True',
-            'vad_alt_method': DEFAULT_VALUES['vad_alt_method'],
-            'word_timestamps': 'True',
-            'temperature': DEFAULT_VALUES['temperature'],
-            'beam_size': DEFAULT_VALUES['beam_size'],
-            'best_of': DEFAULT_VALUES['best_of'],
-            'sentence': 'False',
-            'ff_mdx_kim2': 'True',
-            'mdx_chunk': DEFAULT_VALUES['mdx_chunk'],
-            'mdx_device': DEFAULT_VALUES['mdx_device'],
-            'compute_type': DEFAULT_VALUES['compute_type'],
-            'enable_logging': 'True',
-            'exe_path': DEFAULT_VALUES['exe_path'],
-            'window_geometry': ''
-        }
-        with open(CONFIG_FILE, 'w') as configfile:
-            config.write(configfile)
+class AppConfig:
+    def __init__(self, config_file="config.ini", default_values=None):
+        self.config_file = config_file
+        self.default_values = default_values or {}
+        self.config = configparser.ConfigParser()
+        self.load_config()
 
-def save_config(widget_dict):
-    config['Settings']['language'] = widget_dict['language'].currentText()
-    config['Settings']['model'] = widget_dict['model'].currentText()
-    config['Settings']['task'] = widget_dict['task'].currentText()
-    config['Settings']['output_format'] = widget_dict['output_format'].currentText()
-    config['Settings']['output_dir'] = widget_dict['output_dir'].text()
-    config['Settings']['vad_filter'] = str(widget_dict['vad_filter'].isChecked())
-    config['Settings']['vad_alt_method'] = widget_dict['vad_alt_method'].currentText()
-    config['Settings']['word_timestamps'] = str(widget_dict['word_timestamps'].isChecked())
-    config['Settings']['temperature'] = widget_dict['temperature'].text()
-    config['Settings']['beam_size'] = widget_dict['beam_size'].text()
-    config['Settings']['best_of'] = widget_dict['best_of'].text()
-    config['Settings']['mdx_chunk'] = widget_dict['mdx_chunk'].text()
-    config['Settings']['mdx_device'] = widget_dict['mdx_device'].text()
-    config['Settings']['compute_type'] = widget_dict['compute_type'].currentText()
-    config['Settings']['ff_mdx_kim2'] = str(widget_dict['ff_mdx_kim2'].isChecked())
-    config['Settings']['enable_logging'] = str(widget_dict['enable_logging'].isChecked())
-    config['Settings']['sentence'] = str(widget_dict['sentence'].isChecked())
+    def load_config(self):
+        if os.path.exists(self.config_file):
+            self.config.read(self.config_file)
+        else:
+            self.config['Settings'] = self.default_values
+            self.save_config()
 
-    if 'exe_path' in widget_dict:
-        config['Settings']['exe_path'] = widget_dict['exe_path'].text()
+    def save_config(self, widget_dict=None):
+        if widget_dict:
+            self.config['Settings'] = {
+                'language': widget_dict['language'].currentText(),
+                'model': widget_dict['model'].currentText(),
+                'task': widget_dict['task'].currentText(),
+                'output_format': widget_dict['output_format'].currentText(),
+                'output_dir': widget_dict['output_dir'].text(),
+                'vad_filter': str(widget_dict['vad_filter'].isChecked()),
+                'vad_alt_method': widget_dict['vad_alt_method'].currentText(),
+                'word_timestamps': str(widget_dict['word_timestamps'].isChecked()),
+                'temperature': widget_dict['temperature'].text(),
+                'beam_size': widget_dict['beam_size'].text(),
+                'best_of': widget_dict['best_of'].text(),
+                'mdx_chunk': widget_dict['mdx_chunk'].text(),
+                'mdx_device': widget_dict['mdx_device'].text(),
+                'compute_type': widget_dict['compute_type'].currentText(),
+                'ff_mdx_kim2': str(widget_dict['ff_mdx_kim2'].isChecked()),
+                'enable_logging': str(widget_dict['enable_logging'].isChecked()),
+                'sentence': str(widget_dict['sentence'].isChecked()),
+                'exe_path': widget_dict['exe_path'].text() if 'exe_path' in widget_dict else self.default_values['exe_path']
+            }
+        with open(self.config_file, 'w') as configfile:
+            self.config.write(configfile)
 
-    with open(CONFIG_FILE, 'w') as configfile:
-        config.write(configfile)
+    def get(self, section, option, fallback=None):
+        return self.config.get(section, option, fallback=fallback)
 
-load_config()
+    def get_boolean(self, section, option, fallback=None):
+        return self.config.getboolean(section, option, fallback=fallback)
 
-if config.getboolean('Settings', 'enable_logging', fallback=True):
-    import logging
+config = AppConfig(config_file=CONFIG_FILE, default_values={
+    'language': DEFAULT_VALUES['language'],
+    'model': DEFAULT_VALUES['model'],
+    'task': DEFAULT_VALUES['task'],
+    'output_format': DEFAULT_VALUES['output_format'],
+    'output_dir': DEFAULT_VALUES['output_dir'],
+    'vad_filter': 'True',
+    'vad_alt_method': DEFAULT_VALUES['vad_alt_method'],
+    'word_timestamps': 'True',
+    'temperature': DEFAULT_VALUES['temperature'],
+    'beam_size': DEFAULT_VALUES['beam_size'],
+    'best_of': DEFAULT_VALUES['best_of'],
+    'sentence': 'False',
+    'ff_mdx_kim2': 'True',
+    'mdx_chunk': DEFAULT_VALUES['mdx_chunk'],
+    'mdx_device': DEFAULT_VALUES['mdx_device'],
+    'compute_type': DEFAULT_VALUES['compute_type'],
+    'enable_logging': 'True',
+    'exe_path': DEFAULT_VALUES['exe_path'],
+    'window_geometry': ''
+})
+
+if config.get_boolean('Settings', 'enable_logging', fallback=True):
     logging.basicConfig(filename='transcription.log', level=logging.INFO,
                         format='%(asctime)s - %(levelname)s - %(message)s')
 
 def enable_logging():
-    return config.getboolean('Settings', 'enable_logging', fallback=True)
+    return config.get_boolean('Settings', 'enable_logging', fallback=True)
 
 def validate_file_extension(filename):
     valid_extensions = ('.wav', '.mp3', '.m4a', '.ogg', '.mp4',
@@ -151,7 +162,7 @@ def download_audio(url):
     output_dir = "downloads"
     os.makedirs(output_dir, exist_ok=True)
 
-    filename_template = os.path.join(output_dir, "%(title)s.%(ext)s")
+    filename_template = os.path.join(output_dir, "%(id)s.%(ext)s")
     command = [
         "yt-dlp",
         "-f", "bestaudio",
@@ -162,15 +173,15 @@ def download_audio(url):
     if enable_logging():
         logging.info(f"Executing yt-dlp command: {' '.join(command)}")
 
-    result = subprocess.run(command, check=True, capture_output=True)
+    result = subprocess.run(command, check=True, text=True, capture_output=True)
     if enable_logging():
-        logging.info(f"yt-dlp stdout: {result.stdout.decode('utf-8')}")
-        logging.info(f"yt-dlp stderr: {result.stderr.decode('utf-8')}")
+        logging.info(f"yt-dlp stdout: {result.stdout}")
+        logging.info(f"yt-dlp stderr: {result.stderr}")
 
     output_filename = None
     for line in result.stdout.splitlines():
-        if b"Destination:" in line:
-            output_filename = line.decode('utf-8').split("Destination: ")[-1].strip()
+        if "Destination:" in line:
+            output_filename = line.split("Destination: ")[-1].strip()
             break
 
     if output_filename is None:
@@ -186,7 +197,7 @@ class TranscriptionWorker(QThread):
     finished = pyqtSignal()
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, file_list, widget_dict):
+    def __init__(self, file_list, widget_dict): 
         super().__init__()
         self.file_list = file_list
         self.widget_dict = widget_dict
@@ -197,8 +208,7 @@ class TranscriptionWorker(QThread):
         except Exception as e:
             self.error_occurred.emit(f"An unexpected error occurred: {e}")
             if enable_logging():
-                logging.error(
-                    f"An unexpected error occurred during transcription: {e}")
+                logging.error(f"An unexpected error occurred during transcription: {e}")
 
     def run_transcription(self):
         if not self.file_list:
@@ -223,29 +233,25 @@ class TranscriptionWorker(QThread):
 
         temperature = self.widget_dict['temperature'].text()
         if not validate_numeric_input(temperature, 0.0, 1.0):
-            self.error_occurred.emit(
-                "Temperature must be a number between 0.0 and 1.0.")
+            self.error_occurred.emit("Temperature must be a number between 0.0 and 1.0.")
             return
         temperature = float(temperature)
 
         beam_size = self.widget_dict['beam_size'].text()
         if not validate_numeric_input(beam_size, 1, 100):
-            self.error_occurred.emit(
-                "Beam size must be an integer between 1 and 100.")
+            self.error_occurred.emit("Beam size must be an integer between 1 and 100.")
             return
         beam_size = int(beam_size)
 
         best_of = self.widget_dict['best_of'].text()
         if not validate_numeric_input(best_of, 1, 100):
-            self.error_occurred.emit(
-                "Best of must be an integer between 1 and 100.")
+            self.error_occurred.emit("Best of must be an integer between 1 and 100.")
             return
         best_of = int(best_of)
 
         mdx_chunk = self.widget_dict['mdx_chunk'].text()
         if not validate_numeric_input(mdx_chunk, 1, 100):
-            self.error_occurred.emit(
-                "MDX chunk must be an integer between 1 and 100.")
+            self.error_occurred.emit("MDX chunk must be an integer between 1 and 100.")
             return
         mdx_chunk = int(mdx_chunk)
 
@@ -258,20 +264,16 @@ class TranscriptionWorker(QThread):
         task_option = f"--task {task}" if task != "transcribe" else ""
 
         total_files = len(self.file_list)
-        
-        if total_files > 0:
-            self.progress_updated.emit(0, f"Progress: 0/{total_files}")
+        self.progress_updated.emit(0, f"Progress: 0/{total_files}")
 
         for index, file_path in enumerate(self.file_list, start=1):
             if file_path.startswith(("http://", "https://")):
                 try:
                     filename = download_audio(file_path)
                 except Exception as e:
-                    self.error_occurred.emit(
-                        f"Failed to download audio from {file_path}: {e}")
+                    self.error_occurred.emit(f"Failed to download audio from {file_path}: {e}")
                     if enable_logging():
-                        logging.error(
-                            f"Failed to download audio from {file_path}: {e}")
+                        logging.error(f"Failed to download audio from {file_path}: {e}")
                     continue
             else:
                 filename = file_path
@@ -306,7 +308,7 @@ class TranscriptionWorker(QThread):
             if best_of is not None:
                 command.extend(["--best_of", str(best_of)])
 
-            command = [arg for arg in command if arg]
+            command = [arg for arg in command if arg] 
 
             if enable_logging():
                 logging.info("Selected Options:")
@@ -333,11 +335,9 @@ class TranscriptionWorker(QThread):
             try:
                 subprocess.run(command, shell=True, check=True)
                 progress = int((index / total_files) * 100)
-                self.progress_updated.emit(
-                    progress, f"Progress: {index}/{total_files}")
+                self.progress_updated.emit(progress, f"Progress: {index}/{total_files}")
                 if enable_logging():
-                    logging.info(
-                        f"Transcription complete for {filename}.")
+                    logging.info(f"Transcription complete for {filename}.")
             except subprocess.CalledProcessError as e:
                 self.error_occurred.emit(
                     f"An error occurred during transcription of {filename}: {e}")
@@ -393,7 +393,6 @@ class MainWindow(QWidget):
         self.create_widgets()
         self.create_layout()
         self.load_settings()
-
         self.setAcceptDrops(True)
         self.load_window_geometry()
 
@@ -407,12 +406,11 @@ class MainWindow(QWidget):
             self.restoreGeometry(QByteArray.fromBase64(geometry.encode('utf-8')))
 
     def save_window_geometry(self):
-        config['Settings']['window_geometry'] = self.saveGeometry().toBase64().data().decode('utf-8')
-        with open(CONFIG_FILE, 'w') as configfile:
-            config.write(configfile)
+        config.config['Settings']['window_geometry'] = self.saveGeometry().toBase64().data().decode('utf-8')
+        config.save_config()
 
     def save_settings(self):
-        save_config(self.widget_dict)
+        config.save_config(self.widget_dict)
         self.save_window_geometry()
 
     def create_widgets(self):
@@ -438,7 +436,7 @@ class MainWindow(QWidget):
         self.widget_dict['output_dir'] = QLineEdit()
         self.browse_output_dir_button = QPushButton("Browse")
         self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
-
+        
         self.widget_dict['ff_mdx_kim2'] = QCheckBox("Enable FF MDX Kim2")
         self.widget_dict['vad_filter'] = QCheckBox("Enable VAD Filter")
         self.widget_dict['vad_alt_method'] = QComboBox()
@@ -457,7 +455,7 @@ class MainWindow(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_label = QLabel("Progress: 0/0")
 
-        self.transcribe_button = QPushButton("Transcribe")
+        self.transcribe_button = QPushButton("Start")
         self.transcribe_button.clicked.connect(self.start_transcription)
         self.save_button = QPushButton("Save Settings")
         self.save_button.clicked.connect(self.save_settings)
@@ -475,40 +473,30 @@ class MainWindow(QWidget):
         main_layout.addLayout(file_selection_layout)
 
         options_group_box = QGroupBox("Transcription Options")
-        options_layout = QGridLayout()
-        options_layout.addWidget(QLabel("Language:"), 0, 0)
-        options_layout.addWidget(self.widget_dict['language'], 0, 1)
-        options_layout.addWidget(QLabel("Model:"), 1, 0)
-        options_layout.addWidget(self.widget_dict['model'], 1, 1)
-        options_layout.addWidget(QLabel("Task:"), 2, 0)
-        options_layout.addWidget(self.widget_dict['task'], 2, 1)
-        options_layout.addWidget(QLabel("Output Format:"), 3, 0)
-        options_layout.addWidget(self.widget_dict['output_format'], 3, 1)
-        options_layout.addWidget(QLabel("Output Directory:"), 4, 0)
-        options_layout.addWidget(self.widget_dict['output_dir'], 4, 1)
-        options_layout.addWidget(self.browse_output_dir_button, 4, 2)
+        options_layout = QFormLayout()
+        options_layout.addRow("Language:", self.widget_dict['language'])
+        options_layout.addRow("Model:", self.widget_dict['model'])
+        options_layout.addRow("Task:", self.widget_dict['task'])
+        options_layout.addRow("Output Format:", self.widget_dict['output_format'])
+        output_dir_layout = QHBoxLayout()
+        output_dir_layout.addWidget(self.widget_dict['output_dir'])
+        output_dir_layout.addWidget(self.browse_output_dir_button)
+        options_layout.addRow("Output Directory:", output_dir_layout)
         options_group_box.setLayout(options_layout)
         main_layout.addWidget(options_group_box)
 
-        advanced_options_layout = QGridLayout()
-        advanced_options_layout.addWidget(self.widget_dict['ff_mdx_kim2'], 0, 0, 1, 2)
-        advanced_options_layout.addWidget(self.widget_dict['vad_filter'], 1, 0)
-        advanced_options_layout.addWidget(self.widget_dict['vad_alt_method'], 1, 1)
-        advanced_options_layout.addWidget(self.widget_dict['word_timestamps'], 2, 0)
-        advanced_options_layout.addWidget(self.widget_dict['sentence'], 2, 1)
-        advanced_options_layout.addWidget(QLabel("Compute Type:"), 3, 0)
-        advanced_options_layout.addWidget(self.widget_dict['compute_type'], 3, 1)
-        advanced_options_layout.addWidget(QLabel("Temperature:"), 4, 0)
-        advanced_options_layout.addWidget(self.widget_dict['temperature'], 4, 1)
-        advanced_options_layout.addWidget(QLabel("Beam Size:"), 5, 0)
-        advanced_options_layout.addWidget(self.widget_dict['beam_size'], 5, 1)
-        advanced_options_layout.addWidget(QLabel("Best Of:"), 6, 0)
-        advanced_options_layout.addWidget(self.widget_dict['best_of'], 6, 1)
-        advanced_options_layout.addWidget(QLabel("MDX Chunk (seconds):"), 7, 0)
-        advanced_options_layout.addWidget(self.widget_dict['mdx_chunk'], 7, 1)
-        advanced_options_layout.addWidget(QLabel("MDX Device:"), 8, 0)
-        advanced_options_layout.addWidget(self.widget_dict['mdx_device'], 8, 1)
-        advanced_options_layout.addWidget(self.widget_dict['enable_logging'], 9, 0, 1, 2)
+        advanced_options_layout = QFormLayout()
+        advanced_options_layout.addRow(self.widget_dict['ff_mdx_kim2'])
+        advanced_options_layout.addRow(self.widget_dict['vad_filter'], self.widget_dict['vad_alt_method'])
+        advanced_options_layout.addRow(self.widget_dict['word_timestamps'])
+        advanced_options_layout.addRow(self.widget_dict['sentence'])
+        advanced_options_layout.addRow("Compute Type:", self.widget_dict['compute_type'])
+        advanced_options_layout.addRow("Temperature:", self.widget_dict['temperature'])
+        advanced_options_layout.addRow("Beam Size:", self.widget_dict['beam_size'])
+        advanced_options_layout.addRow("Best Of:", self.widget_dict['best_of'])
+        advanced_options_layout.addRow("MDX Chunk (seconds):", self.widget_dict['mdx_chunk'])
+        advanced_options_layout.addRow("MDX Device:", self.widget_dict['mdx_device'])
+        advanced_options_layout.addRow(self.widget_dict['enable_logging'])
 
         advanced_section = Expander("Advanced Options", QWidget())
         advanced_section.target.setLayout(advanced_options_layout)
@@ -556,21 +544,24 @@ class MainWindow(QWidget):
         self.widget_dict['task'].setCurrentText(config.get('Settings', 'task', fallback=DEFAULT_VALUES['task']))
         self.widget_dict['output_format'].setCurrentText(config.get('Settings', 'output_format', fallback=DEFAULT_VALUES['output_format']))
         self.widget_dict['output_dir'].setText(config.get('Settings', 'output_dir', fallback=''))
-        self.widget_dict['ff_mdx_kim2'].setChecked(config.getboolean('Settings', 'ff_mdx_kim2', fallback=True))
-        self.widget_dict['vad_filter'].setChecked(config.getboolean('Settings', 'vad_filter', fallback=True))
+        self.widget_dict['ff_mdx_kim2'].setChecked(config.get_boolean('Settings', 'ff_mdx_kim2', fallback=True))
+        self.widget_dict['vad_filter'].setChecked(config.get_boolean('Settings', 'vad_filter', fallback=True))
         self.widget_dict['vad_alt_method'].setCurrentText(config.get('Settings', 'vad_alt_method', fallback=DEFAULT_VALUES['vad_alt_method']))
-        self.widget_dict['word_timestamps'].setChecked(config.getboolean('Settings', 'word_timestamps', fallback=True))
+        self.widget_dict['word_timestamps'].setChecked(config.get_boolean('Settings', 'word_timestamps', fallback=True))
         self.widget_dict['temperature'].setText(config.get('Settings', 'temperature', fallback=DEFAULT_VALUES['temperature']))
         self.widget_dict['beam_size'].setText(config.get('Settings', 'beam_size', fallback=DEFAULT_VALUES['beam_size']))
         self.widget_dict['best_of'].setText(config.get('Settings', 'best_of', fallback=DEFAULT_VALUES['best_of']))
         self.widget_dict['mdx_chunk'].setText(config.get('Settings', 'mdx_chunk', fallback=DEFAULT_VALUES['mdx_chunk']))
         self.widget_dict['mdx_device'].setText(config.get('Settings', 'mdx_device', fallback=DEFAULT_VALUES['mdx_device']))
         self.widget_dict['compute_type'].setCurrentText(config.get('Settings', 'compute_type', fallback=DEFAULT_VALUES['compute_type']))
-        self.widget_dict['enable_logging'].setChecked(config.getboolean('Settings', 'enable_logging', fallback=True))
-        self.widget_dict['sentence'].setChecked(config.getboolean('Settings', 'sentence', fallback=False))
+        self.widget_dict['enable_logging'].setChecked(config.get_boolean('Settings', 'enable_logging', fallback=True))
+        self.widget_dict['sentence'].setChecked(config.get_boolean('Settings', 'sentence', fallback=False))
 
     def start_transcription(self):
         file_list = [self.file_list_widget.item(i).text() for i in range(self.file_list_widget.count())]
+
+        self.transcribe_button.setEnabled(False)
+        self.save_button.setEnabled(False)
 
         self.transcription_worker = TranscriptionWorker(file_list, self.widget_dict)
         self.transcription_worker.progress_updated.connect(self.update_progress)
@@ -587,11 +578,16 @@ class MainWindow(QWidget):
         if enable_logging():
             logging.info("Transcription completed for all files.")
         self.reset_progress()
+        self.transcribe_button.setEnabled(True)
+        self.save_button.setEnabled(True)
 
     def show_error_message(self, error_message):
         QMessageBox.critical(self, "Error", error_message)
-        logging.error(error_message)
+        if enable_logging():
+            logging.error(error_message)
         self.reset_progress()
+        self.transcribe_button.setEnabled(True)
+        self.save_button.setEnabled(True)
 
     def reset_progress(self):
         self.progress_bar.setValue(0)
