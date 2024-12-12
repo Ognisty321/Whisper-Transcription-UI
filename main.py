@@ -296,7 +296,7 @@ class TranscriptionWorker(QThread):
             if vad_filter:
                 command.extend(["--vad_filter", str(vad_filter)])
                 if vad_alt_method:
-                    command.extend(["--vad_alt_method", vad_alt_method])
+                    command.extend(["--vad_method", vad_alt_method])
             if word_timestamps:
                 command.extend(["--word_timestamps", str(word_timestamps)])
             if sentence:
