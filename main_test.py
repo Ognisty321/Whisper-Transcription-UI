@@ -884,168 +884,375 @@ class MainWindow(QWidget):
         self.save_window_geometry()
 
     def create_widgets(self):
+        # FILE SELECTION & ENTRY
         self.file_list_widget = QListWidget()
         self.file_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.file_list_widget.setToolTip("Add your audio/video files here or drop them in.\nYou can also add URLs to download automatically.")
+        
         self.browse_button = QPushButton("Browse")
-        self.browse_button.clicked.connect(self.browse_files)
+        self.browse_button.setToolTip("Select audio or video files from your local system.")
+        
         self.clear_button = QPushButton("Clear")
-        self.clear_button.clicked.connect(self.clear_files)
+        self.clear_button.setToolTip("Remove all files from the list below.")
+        
         self.file_entry = QLineEdit()
         self.file_entry.setPlaceholderText("Enter file path or URL")
+        self.file_entry.setToolTip("Type a local file path or an http/https URL and click 'Add'.")
+        
         self.add_file_button = QPushButton("Add")
-        self.add_file_button.clicked.connect(self.add_file_from_entry)
+        self.add_file_button.setToolTip("Add the file/URL from the input box to the list.")
 
+        # BASIC OPTIONS
         self.widget_dict['language'] = QComboBox()
         self.widget_dict['language'].addItems(SUPPORTED_LANGUAGES)
+        self.widget_dict['language'].setToolTip("Choose the audio language or 'Auto Detect' if you're unsure.")
+
         self.widget_dict['model'] = QComboBox()
         self.widget_dict['model'].addItems(WHISPER_MODELS)
+        self.widget_dict['model'].setToolTip("Select the Whisper model to use (e.g., 'medium', 'large-v2').")
+
         self.widget_dict['task'] = QComboBox()
         self.widget_dict['task'].addItems(TASK_OPTIONS)
+        self.widget_dict['task'].setToolTip("Choose 'transcribe' to keep original language,\nor 'translate' to get English output.")
 
         self.widget_dict['output_formats'] = {}
         for fmt in OUTPUT_FORMAT_OPTIONS:
             cb = QCheckBox(fmt)
+            cb.setToolTip(f"Generate {fmt.upper()} subtitle/text format.")
             self.widget_dict['output_formats'][fmt] = cb
 
         self.widget_dict['output_dir'] = QLineEdit()
+        self.widget_dict['output_dir'].setToolTip("Folder where results will be saved. Leave blank for default.")
+        
         self.browse_output_dir_button = QPushButton("Browse")
-        self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
+        self.browse_output_dir_button.setToolTip("Choose a folder to store transcribed files.")
 
+        # PROCESSING OPTIONS
         self.widget_dict['ff_mdx_kim2'] = QCheckBox("Enable FF MDX Kim2")
+        self.widget_dict['ff_mdx_kim2'].setToolTip("Apply Kim2 vocal separation filter.\nUsed mainly for removing vocals from music.")
+
         self.widget_dict['vad_filter'] = QCheckBox("Enable VAD Filter")
+        self.widget_dict['vad_filter'].setToolTip("Voice Activity Detection to skip silent parts.")
+
         self.widget_dict['vad_method'] = QComboBox()
         self.widget_dict['vad_method'].addItems(VAD_METHOD_OPTIONS)
+        self.widget_dict['vad_method'].setToolTip("Method/algorithm for voice activity detection if VAD is enabled.")
+
         self.widget_dict['word_timestamps'] = QCheckBox("Enable Word Timestamps")
+        self.widget_dict['word_timestamps'].setToolTip("Show exact times when each word is spoken (karaoke style).")
+
         self.widget_dict['sentence'] = QCheckBox("Split into sentences")
+        self.widget_dict['sentence'].setToolTip("Break transcript into sentence-based segments instead of large blocks.")
+
         self.widget_dict['compute_type'] = QComboBox()
         self.widget_dict['compute_type'].addItems(COMPUTE_TYPE_OPTIONS)
+        self.widget_dict['compute_type'].setToolTip("Select model quantization type. 'auto' is usually fine.")
+
         self.widget_dict['temperature'] = QLineEdit()
+        self.widget_dict['temperature'].setToolTip("Sampling temperature (0 to 1). Higher = more 'creative' transcripts.\nUsually 0 or 0.2 is good.")
+
         self.widget_dict['beam_size'] = QLineEdit()
+        self.widget_dict['beam_size'].setToolTip("Number of beams for beam search (0 if sampling). Default is 5.")
+
         self.widget_dict['best_of'] = QLineEdit()
+        self.widget_dict['best_of'].setToolTip("For non-zero temperature, how many samples to pick the best from.\nDefault is 5.")
+
         self.widget_dict['mdx_chunk'] = QLineEdit()
+        self.widget_dict['mdx_chunk'].setToolTip("Chunk size in seconds for MDX-Net audio separation.\nSmaller = less memory but slower.")
+
         self.widget_dict['mdx_device'] = QLineEdit()
+        self.widget_dict['mdx_device'].setToolTip("Device for MDX filter (e.g., 'cuda' or 'cpu').")
+
         self.widget_dict['enable_logging'] = QCheckBox("Enable Logging")
-
-        self.widget_dict['diarize'] = QCheckBox("Enable Diarization")
-        self.widget_dict['diarize_method'] = QComboBox()
-        self.widget_dict['diarize_method'].addItems(DIARIZE_METHOD_OPTIONS)
-        self.widget_dict['num_speakers'] = QLineEdit()
-        self.widget_dict['min_speakers'] = QLineEdit()
-        self.widget_dict['max_speakers'] = QLineEdit()
-        self.widget_dict['diarize_dump'] = QLineEdit()
-        self.widget_dict['hotwords'] = QLineEdit()
-        self.widget_dict['rehot'] = QCheckBox("Re-Hotwords")
-
-        self.widget_dict['ignore_dupe_prompt'] = QLineEdit()
-        self.widget_dict['ignore_dupe_prompt'].setPlaceholderText("Integer (default 2)")
-
-        self.widget_dict['multilingual'] = QCheckBox("Multilingual")
-        self.widget_dict['batch_size'] = QLineEdit()
-        self.widget_dict['batched'] = QCheckBox("Batched")
-        self.widget_dict['unmerged'] = QCheckBox("Unmerged")
+        self.widget_dict['enable_logging'].setToolTip("Write debug info to 'transcription.log' file.")
 
         self.widget_dict['exe_path'] = QLineEdit()
         self.widget_dict['exe_path'].setPlaceholderText("Path to whisper-standalone exe (optional)")
+        self.widget_dict['exe_path'].setToolTip("If the exe is in a different folder, specify it here.\nOtherwise, leave blank to use local or PATH.")
 
-        # Additional advanced arguments
-        # We'll create several groups for them
+        # DIARIZATION
+        self.widget_dict['diarize'] = QCheckBox("Enable Diarization")
+        self.widget_dict['diarize'].setToolTip("Label speaker changes (Speaker 1, Speaker 2, etc.).")
 
-        # Decoding Parameters
-        self.widget_dict['language_detection_threshold'] = QLineEdit()
-        self.widget_dict['language_detection_segments'] = QLineEdit()
-        self.widget_dict['patience'] = QLineEdit()
-        self.widget_dict['length_penalty'] = QLineEdit()
-        self.widget_dict['repetition_penalty'] = QLineEdit()
-        self.widget_dict['no_repeat_ngram_size'] = QLineEdit()
-        self.widget_dict['suppress_blank'] = QCheckBox("Suppress Blank")
-        self.widget_dict['suppress_tokens'] = QLineEdit()
-        self.widget_dict['initial_prompt'] = QLineEdit()
-        self.widget_dict['prefix'] = QLineEdit()
-        self.widget_dict['condition_on_previous_text'] = QCheckBox("Condition on Previous Text")
-        self.widget_dict['prompt_reset_on_temperature'] = QLineEdit()
-        self.widget_dict['without_timestamps'] = QCheckBox("Without Timestamps")
-        self.widget_dict['max_initial_timestamp'] = QLineEdit()
-        self.widget_dict['temperature_increment_on_fallback'] = QLineEdit()
-        self.widget_dict['compression_ratio_threshold'] = QLineEdit()
-        self.widget_dict['logprob_threshold'] = QLineEdit()
-        self.widget_dict['no_speech_threshold'] = QLineEdit()
+        self.widget_dict['diarize_method'] = QComboBox()
+        self.widget_dict['diarize_method'].addItems(DIARIZE_METHOD_OPTIONS)
+        self.widget_dict['diarize_method'].setToolTip("Method used for speaker segmentation/diarization.")
 
-        self.widget_dict['highlight_words'] = QCheckBox("Highlight Words")
-        self.widget_dict['prepend_punctuations'] = QLineEdit()
-        self.widget_dict['append_punctuations'] = QLineEdit()
-        self.widget_dict['threads'] = QLineEdit()
+        self.widget_dict['num_speakers'] = QLineEdit()
+        self.widget_dict['num_speakers'].setToolTip("If known, set the exact number of speakers.")
 
-        # VAD Settings
-        self.widget_dict['vad_threshold'] = QLineEdit()
-        self.widget_dict['vad_min_speech_duration_ms'] = QLineEdit()
-        self.widget_dict['vad_max_speech_duration_s'] = QLineEdit()
-        self.widget_dict['vad_min_silence_duration_ms'] = QLineEdit()
-        self.widget_dict['vad_speech_pad_ms'] = QLineEdit()
-        self.widget_dict['vad_window_size_samples'] = QLineEdit()
-        self.widget_dict['vad_dump'] = QCheckBox("VAD Dump")
-        self.widget_dict['vad_dump_aud'] = QCheckBox("VAD Dump Aud")
-        self.widget_dict['vad_device'] = QLineEdit()
+        self.widget_dict['min_speakers'] = QLineEdit()
+        self.widget_dict['min_speakers'].setToolTip("Minimum possible number of speakers if unknown.")
 
-        # Hallucination & Clip
-        self.widget_dict['hallucination_silence_threshold'] = QLineEdit()
-        self.widget_dict['hallucination_silence_th_temp'] = QComboBox()
-        self.widget_dict['hallucination_silence_th_temp'].addItems(["0.0","0.2","0.5","0.8","1.0"])
-        self.widget_dict['clip_timestamps'] = QLineEdit()
+        self.widget_dict['max_speakers'] = QLineEdit()
+        self.widget_dict['max_speakers'].setToolTip("Maximum possible number of speakers if unknown.")
 
-        # Additional segment & batch parameters
-        self.widget_dict['max_new_tokens'] = QLineEdit()
-        self.widget_dict['chunk_length'] = QLineEdit()
+        self.widget_dict['diarize_dump'] = QLineEdit()
+        self.widget_dict['diarize_dump'].setToolTip("Dump diarization output to file (debug usage).")
 
-        # Post-processing
-        self.widget_dict['postfix'] = QCheckBox("Postfix")
-        self.widget_dict['skip'] = QCheckBox("Skip")
-        self.widget_dict['beep_off'] = QCheckBox("Beep Off")
-        self.widget_dict['check_files'] = QCheckBox("Check Files")
-        self.widget_dict['alt_writer_off'] = QCheckBox("Alt Writer Off")
-        self.widget_dict['hallucinations_list_off'] = QCheckBox("Hallucinations List Off")
-        self.widget_dict['v3_offsets_off'] = QCheckBox("V3 Offsets Off")
-        self.widget_dict['prompt_reset_on_no_end'] = QComboBox()
-        self.widget_dict['prompt_reset_on_no_end'].addItems(["0","1","2"])
-        self.widget_dict['one_word'] = QComboBox()
-        self.widget_dict['one_word'].addItems(["0","1","2"])
-        self.widget_dict['standard'] = QCheckBox("Standard")
-        self.widget_dict['standard_asia'] = QCheckBox("Standard Asia")
-        self.widget_dict['max_comma'] = QLineEdit()
-        self.widget_dict['max_comma_cent'] = QComboBox()
-        self.widget_dict['max_comma_cent'].addItems(["20","30","40","50","60","70","80","90","100"])
-        self.widget_dict['max_gap'] = QLineEdit()
-        self.widget_dict['max_line_width'] = QLineEdit()
-        self.widget_dict['max_line_count'] = QLineEdit()
-        self.widget_dict['min_dist_to_end'] = QComboBox()
-        self.widget_dict['min_dist_to_end'].addItems(["0","4","5","6","7","8","9","10","11","12"])
-
-        # Audio Filters
-        self.widget_dict['ff_dump'] = QCheckBox("FF Dump")
-        self.widget_dict['ff_track'] = QComboBox()
-        self.widget_dict['ff_track'].addItems(["1","2","3","4","5","6"])
-        self.widget_dict['ff_fc'] = QCheckBox("FF Front-Center")
-        self.widget_dict['ff_mp3'] = QCheckBox("FF MP3")
-        self.widget_dict['ff_sync'] = QCheckBox("FF Sync")
-        self.widget_dict['ff_rnndn_sh'] = QCheckBox("FF RNNDN SH")
-        self.widget_dict['ff_rnndn_xiph'] = QCheckBox("FF RNNDN Xiph")
-        self.widget_dict['ff_fftdn'] = QLineEdit()
-        self.widget_dict['ff_tempo'] = QLineEdit()
-        self.widget_dict['ff_gate'] = QCheckBox("FF Gate")
-        self.widget_dict['ff_speechnorm'] = QCheckBox("FF SpeechNorm")
-        self.widget_dict['ff_loudnorm'] = QCheckBox("FF LoudNorm")
-        self.widget_dict['ff_silence_suppress'] = QLineEdit()
-        self.widget_dict['ff_lowhighpass'] = QCheckBox("FF LowHighPass")
-
-        # Diarization extras
         self.widget_dict['diarize_device'] = QLineEdit()
-        self.widget_dict['diarize_threads'] = QLineEdit()
-        self.widget_dict['speaker'] = QLineEdit()
+        self.widget_dict['diarize_device'].setToolTip("Device for diarization (cuda/cpu).")
 
+        self.widget_dict['diarize_threads'] = QLineEdit()
+        self.widget_dict['diarize_threads'].setToolTip("Threads for diarization (0=auto).")
+
+        self.widget_dict['speaker'] = QLineEdit()
+        self.widget_dict['speaker'].setToolTip("Custom speaker label prefix.")
+
+        # PROMPT AND LANGUAGE
+        self.widget_dict['hotwords'] = QLineEdit()
+        self.widget_dict['hotwords'].setToolTip("Extra words/phrases to guide the transcription (context hints).")
+
+        self.widget_dict['rehot'] = QCheckBox("Re-Hotwords")
+        self.widget_dict['rehot'].setToolTip("Carry hotwords across segments (keeps them in context).")
+
+        self.widget_dict['ignore_dupe_prompt'] = QLineEdit()
+        self.widget_dict['ignore_dupe_prompt'].setPlaceholderText("Integer (default 2)")
+        self.widget_dict['ignore_dupe_prompt'].setToolTip("Prevent repeated text from re-adding to prompt.\nInteger, default=2.")
+
+        self.widget_dict['multilingual'] = QCheckBox("Multilingual")
+        self.widget_dict['multilingual'].setToolTip("Auto-detect language for each segment if it changes.\nUseful for audio with multiple languages.")
+
+        # BATCH PROCESSING
+        self.widget_dict['batch_size'] = QLineEdit()
+        self.widget_dict['batch_size'].setToolTip("Max parallel requests in batched mode. Default is 8 if blank.")
+
+        self.widget_dict['batched'] = QCheckBox("Batched")
+        self.widget_dict['batched'].setToolTip("Speed up inference by grouping segments together.\nMay lower accuracy slightly.")
+
+        self.widget_dict['unmerged'] = QCheckBox("Unmerged")
+        self.widget_dict['unmerged'].setToolTip("Output raw segments in batched mode (no merging).\nSlower but can yield more accurate timestamps.")
+
+        # DECODING PARAMETERS
+        self.widget_dict['language_detection_threshold'] = QLineEdit()
+        self.widget_dict['language_detection_threshold'].setToolTip("Threshold for auto language detection.\n0.5 is typical.")
+
+        self.widget_dict['language_detection_segments'] = QLineEdit()
+        self.widget_dict['language_detection_segments'].setToolTip("Number of segments to consider for language detection.\nUsually 1-2 is enough.")
+
+        self.widget_dict['patience'] = QLineEdit()
+        self.widget_dict['patience'].setToolTip("Patience in beam search decoding. Default 2.0.")
+
+        self.widget_dict['length_penalty'] = QLineEdit()
+        self.widget_dict['length_penalty'].setToolTip("Penalize short or long outputs. Default=1.0 for no penalty.")
+
+        self.widget_dict['repetition_penalty'] = QLineEdit()
+        self.widget_dict['repetition_penalty'].setToolTip("Discourage repeated phrases. 1.0 means no penalty.")
+
+        self.widget_dict['no_repeat_ngram_size'] = QLineEdit()
+        self.widget_dict['no_repeat_ngram_size'].setToolTip("Size of ngrams to suppress repeats.")
+
+        self.widget_dict['suppress_blank'] = QCheckBox("Suppress Blank")
+        self.widget_dict['suppress_blank'].setToolTip("Try to remove empty or blank text segments at start.")
+
+        self.widget_dict['suppress_tokens'] = QLineEdit()
+        self.widget_dict['suppress_tokens'].setToolTip("Comma-separated token IDs to skip. '-1' means skip most special tokens.")
+
+        self.widget_dict['initial_prompt'] = QLineEdit()
+        self.widget_dict['initial_prompt'].setToolTip("Optional text to prime the model (like context). 'auto' uses some heuristics.")
+
+        self.widget_dict['prefix'] = QLineEdit()
+        self.widget_dict['prefix'].setToolTip("Optional prefix text for the first segment.")
+
+        self.widget_dict['condition_on_previous_text'] = QCheckBox("Condition on Previous Text")
+        self.widget_dict['condition_on_previous_text'].setToolTip("Use prior transcript as context for the next chunk.")
+
+        self.widget_dict['prompt_reset_on_temperature'] = QLineEdit()
+        self.widget_dict['prompt_reset_on_temperature'].setToolTip("Reset prompt if temp is above this threshold.")
+
+        self.widget_dict['without_timestamps'] = QCheckBox("Without Timestamps")
+        self.widget_dict['without_timestamps'].setToolTip("Disable timestamps in output (useful for short audio).")
+
+        self.widget_dict['max_initial_timestamp'] = QLineEdit()
+        self.widget_dict['max_initial_timestamp'].setToolTip("Don't allow the first timestamp to exceed this.\nUsually 1.0 second.")
+
+        self.widget_dict['temperature_increment_on_fallback'] = QLineEdit()
+        self.widget_dict['temperature_increment_on_fallback'].setToolTip("Increase temperature if decoding fails certain checks.")
+
+        self.widget_dict['compression_ratio_threshold'] = QLineEdit()
+        self.widget_dict['compression_ratio_threshold'].setToolTip("Abort if text is too compressed (like nonsense).")
+
+        self.widget_dict['logprob_threshold'] = QLineEdit()
+        self.widget_dict['logprob_threshold'].setToolTip("Abort if average logprob goes below this.")
+
+        self.widget_dict['no_speech_threshold'] = QLineEdit()
+        self.widget_dict['no_speech_threshold'].setToolTip("If <|nospeech|> is likely, consider segment silent.")
+        
+        self.widget_dict['highlight_words'] = QCheckBox("Highlight Words")
+        self.widget_dict['highlight_words'].setToolTip("Show each word with an underline effect (karaoke style).")
+        
+        self.widget_dict['prepend_punctuations'] = QLineEdit()
+        self.widget_dict['prepend_punctuations'].setToolTip("Punctuation symbols that attach to the following word.")
+
+        self.widget_dict['append_punctuations'] = QLineEdit()
+        self.widget_dict['append_punctuations'].setToolTip("Punctuation symbols that attach to the previous word.")
+
+        self.widget_dict['threads'] = QLineEdit()
+        self.widget_dict['threads'].setToolTip("Number of CPU threads to use. 0=auto.")
+
+        # VAD SETTINGS
+        self.widget_dict['vad_threshold'] = QLineEdit()
+        self.widget_dict['vad_threshold'].setToolTip("Threshold above which we consider audio as speech.")
+
+        self.widget_dict['vad_min_speech_duration_ms'] = QLineEdit()
+        self.widget_dict['vad_min_speech_duration_ms'].setToolTip("Minimum length of speech chunk in ms.")
+
+        self.widget_dict['vad_max_speech_duration_s'] = QLineEdit()
+        self.widget_dict['vad_max_speech_duration_s'].setToolTip("Max length of a single speech chunk in seconds.")
+
+        self.widget_dict['vad_min_silence_duration_ms'] = QLineEdit()
+        self.widget_dict['vad_min_silence_duration_ms'].setToolTip("Silence required (ms) to consider splitting segments.")
+
+        self.widget_dict['vad_speech_pad_ms'] = QLineEdit()
+        self.widget_dict['vad_speech_pad_ms'].setToolTip("Add this much padding (ms) on both sides of each chunk.")
+
+        self.widget_dict['vad_window_size_samples'] = QLineEdit()
+        self.widget_dict['vad_window_size_samples'].setToolTip("Audio chunk size for VAD.")
+
+        self.widget_dict['vad_dump'] = QCheckBox("VAD Dump")
+        self.widget_dict['vad_dump'].setToolTip("Save intermediate results/subtitles for debugging VAD.")
+
+        self.widget_dict['vad_dump_aud'] = QCheckBox("VAD Dump Aud")
+        self.widget_dict['vad_dump_aud'].setToolTip("Also dump audio chunks for debug when VAD is used.")
+
+        self.widget_dict['vad_device'] = QLineEdit()
+        self.widget_dict['vad_device'].setToolTip("Device for advanced VAD methods. e.g. 'cuda' or 'cpu'.")
+
+        # HALLUCINATION DETECTION
+        self.widget_dict['hallucination_silence_threshold'] = QLineEdit()
+        self.widget_dict['hallucination_silence_threshold'].setToolTip("Skip silent periods longer than this to avoid 'hallucinations'.")
+
+        self.widget_dict['hallucination_silence_th_temp'] = QComboBox()
+        self.widget_dict['hallucination_silence_th_temp'].addItems(["0.0", "0.2", "0.5", "0.8", "1.0"])
+        self.widget_dict['hallucination_silence_th_temp'].setToolTip("If temperature is above this, ignore hallucination filtering.")
+
+        self.widget_dict['clip_timestamps'] = QLineEdit()
+        self.widget_dict['clip_timestamps'].setToolTip("Comma-separated list of start,end,... to limit which segments to process.")
+
+        # EXTRA DECODING OPTIONS
+        self.widget_dict['max_new_tokens'] = QLineEdit()
+        self.widget_dict['max_new_tokens'].setToolTip("Max tokens to generate per chunk.\nBlank for unlimited.")
+
+        self.widget_dict['chunk_length'] = QLineEdit()
+        self.widget_dict['chunk_length'].setToolTip("Segment length override. e.g. 30 = split audio into 30s chunks.")
+
+        # POST-PROCESSING
+        self.widget_dict['postfix'] = QCheckBox("Postfix")
+        self.widget_dict['postfix'].setToolTip("Append language code to output filenames (e.g., '_en').")
+
+        self.widget_dict['skip'] = QCheckBox("Skip")
+        self.widget_dict['skip'].setToolTip("Skip file if transcript already exists.")
+
+        self.widget_dict['beep_off'] = QCheckBox("Beep Off")
+        self.widget_dict['beep_off'].setToolTip("Disable beep sound at the end of transcription.")
+
+        self.widget_dict['check_files'] = QCheckBox("Check Files")
+        self.widget_dict['check_files'].setToolTip("Scan input files/folders for valid media before transcribing.")
+
+        self.widget_dict['alt_writer_off'] = QCheckBox("Alt Writer Off")
+        self.widget_dict['alt_writer_off'].setToolTip("Forcefully disable alternate subtitles writer function.")
+
+        self.widget_dict['hallucinations_list_off'] = QCheckBox("Hallucinations List Off")
+        self.widget_dict['hallucinations_list_off'].setToolTip("Allow known 'hallucinations' words to appear.")
+
+        self.widget_dict['v3_offsets_off'] = QCheckBox("V3 Offsets Off")
+        self.widget_dict['v3_offsets_off'].setToolTip("Disable custom offset fix for large-v3 model hallucinations.")
+
+        self.widget_dict['prompt_reset_on_no_end'] = QComboBox()
+        self.widget_dict['prompt_reset_on_no_end'].addItems(["0", "1", "2"])
+        self.widget_dict['prompt_reset_on_no_end'].setToolTip("Reset prompt if no sentence ending found.")
+
+        self.widget_dict['one_word'] = QComboBox()
+        self.widget_dict['one_word'].addItems(["0", "1", "2"])
+        self.widget_dict['one_word'].setToolTip("One word per line options (0=off, 1=basic, 2=special).")
+
+        self.widget_dict['standard'] = QCheckBox("Standard")
+        self.widget_dict['standard'].setToolTip("Use standard subtitle formatting preset.")
+
+        self.widget_dict['standard_asia'] = QCheckBox("Standard Asia")
+        self.widget_dict['standard_asia'].setToolTip("Use Asian language subtitle formatting preset.")
+
+        self.widget_dict['max_comma'] = QLineEdit()
+        self.widget_dict['max_comma'].setToolTip("Split sentence if line is longer than this and a comma is found.")
+
+        self.widget_dict['max_comma_cent'] = QComboBox()
+        self.widget_dict['max_comma_cent'].addItems(["20", "30", "40", "50", "60", "70", "80", "90", "100"])
+        self.widget_dict['max_comma_cent'].setToolTip("Split after comma if line is >= X% of max_line_width.")
+
+        self.widget_dict['max_gap'] = QLineEdit()
+        self.widget_dict['max_gap'].setToolTip("If gap between words is bigger than this, treat as sentence break.")
+
+        self.widget_dict['max_line_width'] = QLineEdit()
+        self.widget_dict['max_line_width'].setToolTip("Max characters per line. 1000 means practically unlimited.")
+
+        self.widget_dict['max_line_count'] = QLineEdit()
+        self.widget_dict['max_line_count'].setToolTip("Max lines per subtitle segment.")
+
+        self.widget_dict['min_dist_to_end'] = QComboBox()
+        self.widget_dict['min_dist_to_end'].addItems(["0", "4", "5", "6", "7", "8", "9", "10", "11", "12"])
+        self.widget_dict['min_dist_to_end'].setToolTip("If a small word is near line end, start a new line.")
+
+        # AUDIO FILTERS
+        self.widget_dict['ff_dump'] = QCheckBox("FF Dump")
+        self.widget_dict['ff_dump'].setToolTip("Output pre-processed audio for debugging filters.")
+
+        self.widget_dict['ff_track'] = QComboBox()
+        self.widget_dict['ff_track'].addItems(["1", "2", "3", "4", "5", "6"])
+        self.widget_dict['ff_track'].setToolTip("Select audio track # to process.")
+
+        self.widget_dict['ff_fc'] = QCheckBox("FF Front-Center")
+        self.widget_dict['ff_fc'].setToolTip("Select only the Front-Center channel from audio.")
+
+        self.widget_dict['ff_mp3'] = QCheckBox("FF MP3")
+        self.widget_dict['ff_mp3'].setToolTip("Convert to MP3 and back as a filter.")
+
+        self.widget_dict['ff_sync'] = QCheckBox("FF Sync")
+        self.widget_dict['ff_sync'].setToolTip("Adjust audio speed to keep timestamps in sync.")
+
+        self.widget_dict['ff_rnndn_sh'] = QCheckBox("FF RNNDN SH")
+        self.widget_dict['ff_rnndn_sh'].setToolTip("Remove non-speech using GregorR's SH RNN model.")
+
+        self.widget_dict['ff_rnndn_xiph'] = QCheckBox("FF RNNDN Xiph")
+        self.widget_dict['ff_rnndn_xiph'].setToolTip("Remove non-speech using Xiph's RNN model.")
+
+        self.widget_dict['ff_fftdn'] = QLineEdit()
+        self.widget_dict['ff_fftdn'].setToolTip("General denoise with FFT. 0=disabled, 12=normal strength.")
+
+        self.widget_dict['ff_tempo'] = QLineEdit()
+        self.widget_dict['ff_tempo'].setToolTip("Change audio speed. 0.5=half speed, 2.0=double speed.")
+
+        self.widget_dict['ff_gate'] = QCheckBox("FF Gate")
+        self.widget_dict['ff_gate'].setToolTip("Reduce quiet areas even further.")
+
+        self.widget_dict['ff_speechnorm'] = QCheckBox("FF SpeechNorm")
+        self.widget_dict['ff_speechnorm'].setToolTip("Extreme fast speech amplification.")
+
+        self.widget_dict['ff_loudnorm'] = QCheckBox("FF LoudNorm")
+        self.widget_dict['ff_loudnorm'].setToolTip("EBU R128 loudness normalization.")
+
+        self.widget_dict['ff_silence_suppress'] = QLineEdit()
+        self.widget_dict['ff_silence_suppress'].setToolTip("Suppress quiet parts. Format: 'noise duration'.")
+
+        self.widget_dict['ff_lowhighpass'] = QCheckBox("FF LowHighPass")
+        self.widget_dict['ff_lowhighpass'].setToolTip("Apply a 50Hz-7800Hz band-pass filter.")
+
+        # PROGRESS & CONTROLS
         self.progress_bar = QProgressBar()
         self.progress_label = QLabel("Progress: 0/0")
+        self.progress_label.setToolTip("Current transcription progress across all files.")
+
         self.transcribe_button = QPushButton("Start")
-        self.transcribe_button.clicked.connect(self.start_transcription)
+        self.transcribe_button.setToolTip("Begin transcription/translation for all files in the list.")
+
         self.save_button = QPushButton("Save Settings")
+        self.save_button.setToolTip("Save your current settings to config.ini.")
+
+        # Hook up button signals
+        self.browse_button.clicked.connect(self.browse_files)
+        self.clear_button.clicked.connect(self.clear_files)
+        self.add_file_button.clicked.connect(self.add_file_from_entry)
+        self.browse_output_dir_button.clicked.connect(self.browse_output_dir)
+        self.transcribe_button.clicked.connect(self.start_transcription)
         self.save_button.clicked.connect(self.save_settings)
 
     def create_layout(self):
@@ -1055,8 +1262,11 @@ class MainWindow(QWidget):
         container_widget = QWidget()
         container_layout = QVBoxLayout(container_widget)
 
+        # FILE SELECTION LAYOUT
         file_selection_layout = QGridLayout()
-        file_selection_layout.addWidget(QLabel("Audio/Video Files:"), 0, 0, 1, 2)
+        file_selection_label = QLabel("Audio/Video Files:")
+        file_selection_label.setToolTip("List of audio or video files to process.\nYou can drag-and-drop here or click 'Browse'.")
+        file_selection_layout.addWidget(file_selection_label, 0, 0, 1, 2)
         file_selection_layout.addWidget(self.file_list_widget, 1, 0, 1, 2)
         file_selection_layout.addWidget(self.file_entry, 2, 0)
         file_selection_layout.addWidget(self.add_file_button, 2, 1)
@@ -1064,35 +1274,48 @@ class MainWindow(QWidget):
         file_selection_layout.addWidget(self.clear_button, 3, 1)
         container_layout.addLayout(file_selection_layout)
 
+        # BASIC OPTIONS
         options_group_box = QGroupBox("Basic Options")
         options_layout = QFormLayout()
-        options_layout.addRow("Language:", self.widget_dict['language'])
-        options_layout.addRow("Model:", self.widget_dict['model'])
-        options_layout.addRow("Task:", self.widget_dict['task'])
+        lang_label = QLabel("Language:")
+        lang_label.setToolTip("Choose the language of the audio or Auto-Detect.")
+        options_layout.addRow(lang_label, self.widget_dict['language'])
+
+        model_label = QLabel("Model:")
+        model_label.setToolTip("Select a Whisper model (small, medium, large, etc.).")
+        options_layout.addRow(model_label, self.widget_dict['model'])
+
+        task_label = QLabel("Task:")
+        task_label.setToolTip("Transcribe = same language.\nTranslate = convert to English.")
+        options_layout.addRow(task_label, self.widget_dict['task'])
 
         output_format_layout = QHBoxLayout()
         for fmt, cb in self.widget_dict['output_formats'].items():
             output_format_layout.addWidget(cb)
         fmt_box = QGroupBox("Output Formats")
+        fmt_box.setToolTip("Select which subtitle/text file formats to produce.")
         fmt_box.setLayout(output_format_layout)
         options_layout.addRow(fmt_box)
 
+        output_dir_label = QLabel("Output Directory:")
+        output_dir_label.setToolTip("Folder to save your transcriptions.")
         output_dir_layout = QHBoxLayout()
         output_dir_layout.addWidget(self.widget_dict['output_dir'])
         output_dir_layout.addWidget(self.browse_output_dir_button)
-        options_layout.addRow("Output Directory:", output_dir_layout)
+        options_layout.addRow(output_dir_label, output_dir_layout)
         options_group_box.setLayout(options_layout)
         container_layout.addWidget(options_group_box)
 
+        # ADVANCED SECTION
         advanced_widget = QWidget()
         advanced_form = QFormLayout(advanced_widget)
+
         advanced_form.addRow(self.widget_dict['ff_mdx_kim2'])
         adv_vad_layout = QHBoxLayout()
         adv_vad_layout.addWidget(self.widget_dict['vad_filter'])
         adv_vad_layout.addWidget(QLabel("Method:"))
         adv_vad_layout.addWidget(self.widget_dict['vad_method'])
         advanced_form.addRow("VAD:", adv_vad_layout)
-
         advanced_form.addRow(self.widget_dict['word_timestamps'])
         advanced_form.addRow(self.widget_dict['sentence'])
         advanced_form.addRow("Compute Type:", self.widget_dict['compute_type'])
@@ -1104,7 +1327,7 @@ class MainWindow(QWidget):
         advanced_form.addRow(self.widget_dict['enable_logging'])
         advanced_form.addRow("Executable Path:", self.widget_dict['exe_path'])
 
-        # Diarization box
+        # DIARIZATION BOX
         diarize_box = QGroupBox("Diarization")
         diarize_layout = QFormLayout(diarize_box)
         diarize_layout.addRow(self.widget_dict['diarize'])
@@ -1124,7 +1347,7 @@ class MainWindow(QWidget):
         diarize_layout.addRow("Diarize Threads:", self.widget_dict['diarize_threads'])
         diarize_layout.addRow("Speaker:", self.widget_dict['speaker'])
 
-        # Decoding parameters
+        # DECODING PARAMETERS BOX
         decoding_box = QGroupBox("Decoding Parameters")
         decoding_layout = QFormLayout(decoding_box)
         decoding_layout.addRow("Language Detection Threshold:", self.widget_dict['language_detection_threshold'])
@@ -1150,7 +1373,7 @@ class MainWindow(QWidget):
         decoding_layout.addRow("Append Punctuations:", self.widget_dict['append_punctuations'])
         decoding_layout.addRow("Threads:", self.widget_dict['threads'])
 
-        # VAD Settings box
+        # VAD SETTINGS BOX
         vad_box = QGroupBox("VAD Settings")
         vad_layout = QFormLayout(vad_box)
         vad_layout.addRow("VAD Threshold:", self.widget_dict['vad_threshold'])
@@ -1163,20 +1386,20 @@ class MainWindow(QWidget):
         vad_layout.addRow(self.widget_dict['vad_dump_aud'])
         vad_layout.addRow("VAD Device:", self.widget_dict['vad_device'])
 
-        # Hallucination & Clip
+        # HALLUCINATION & CLIP BOX
         hallucination_box = QGroupBox("Hallucination & Clipping")
         hallucination_layout = QFormLayout(hallucination_box)
         hallucination_layout.addRow("Hallucination Silence Threshold:", self.widget_dict['hallucination_silence_threshold'])
         hallucination_layout.addRow("Hallucination Silence TH Temp:", self.widget_dict['hallucination_silence_th_temp'])
         hallucination_layout.addRow("Clip Timestamps:", self.widget_dict['clip_timestamps'])
 
-        # Additional segments/batch
+        # EXTRA DECODING BOX
         extra_box = QGroupBox("Extra Decoding Options")
         extra_layout = QFormLayout(extra_box)
         extra_layout.addRow("Max New Tokens:", self.widget_dict['max_new_tokens'])
         extra_layout.addRow("Chunk Length:", self.widget_dict['chunk_length'])
 
-        # Post-processing
+        # POST-PROCESSING BOX
         post_box = QGroupBox("Post-processing")
         post_layout = QFormLayout(post_box)
         post_layout.addRow(self.widget_dict['postfix'])
@@ -1197,7 +1420,7 @@ class MainWindow(QWidget):
         post_layout.addRow("Max Line Count:", self.widget_dict['max_line_count'])
         post_layout.addRow("Min Dist to End:", self.widget_dict['min_dist_to_end'])
 
-        # Audio Filters
+        # AUDIO FILTERS BOX
         filters_box = QGroupBox("Audio Filters")
         filters_layout = QFormLayout(filters_box)
         filters_layout.addRow(self.widget_dict['ff_dump'])
@@ -1215,7 +1438,6 @@ class MainWindow(QWidget):
         filters_layout.addRow("FF Silence Suppress (noise duration):", self.widget_dict['ff_silence_suppress'])
         filters_layout.addRow(self.widget_dict['ff_lowhighpass'])
 
-        # Add all group boxes to advanced_expander
         adv_inner_layout = QVBoxLayout()
         adv_inner_layout.addWidget(diarize_box)
         adv_inner_layout.addWidget(decoding_box)
@@ -1224,12 +1446,12 @@ class MainWindow(QWidget):
         adv_inner_layout.addWidget(extra_box)
         adv_inner_layout.addWidget(post_box)
         adv_inner_layout.addWidget(filters_box)
-
         advanced_form.addRow(adv_inner_layout)
 
         advanced_expander = Expander("Advanced & Additional Options", advanced_widget)
         container_layout.addWidget(advanced_expander)
 
+        # PROGRESS + BUTTONS
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_bar)
         progress_layout.addWidget(self.progress_label)
@@ -1270,7 +1492,6 @@ class MainWindow(QWidget):
         self.file_list_widget.clear()
 
     def load_settings(self):
-        # Load all settings similarly to how you did before
         def load_bool(key, default='False'):
             return config.get_boolean('Settings', key, fallback=(default=='True'))
         def load_str(key, default=''):
