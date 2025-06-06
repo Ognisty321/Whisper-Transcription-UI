@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QScrollArea
 )
 from PyQt6.QtCore import QThread, pyqtSignal, QByteArray
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QPixmap
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 try:
     from PyQt6 import QtQuickControls2
