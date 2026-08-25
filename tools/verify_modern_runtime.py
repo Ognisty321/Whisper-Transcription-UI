@@ -97,7 +97,17 @@ def main() -> int:
     try:
         compiled_arch_flags = torch._C._cuda_getArchFlags()  # type: ignore[attr-defined]
     except Exception as exc:  # pragma: no cover - diagnostic only
-        compiled_arch_flags = f"unavailable: {type(exc).__name__}: {exc}"
+        raise RuntimeError(f"Unable to read PyTorch CUDA architecture flags: {exc}") from exc
+    if "sm_120" not in compiled_arch_flags.split():
+        raise RuntimeError(f"PyTorch runtime does not include Blackwell sm_120: {compiled_arch_flags!r}")
+
+    cudnn_version = torch.backends.cudnn.version()
+    if not isinstance(cudnn_version, int) or cudnn_version < 90000:
+        raise RuntimeError(f"Expected cuDNN 9 or newer, got {cudnn_version!r}")
+
+    onnxruntime_providers = onnxruntime.get_available_providers()
+    if "CUDAExecutionProvider" not in onnxruntime_providers:
+        raise RuntimeError(f"ONNX Runtime CUDAExecutionProvider is unavailable: {onnxruntime_providers!r}")
 
     critical_files = [
         contents / "ctranslate2" / "_ext.cp310-win_amd64.pyd",
@@ -117,9 +127,11 @@ def main() -> int:
         "module_files": module_files,
         "torch_cuda_available_on_runner": torch.cuda.is_available(),
         "torch_compiled_arch_flags": compiled_arch_flags,
-        "torch_cudnn_version": torch.backends.cudnn.version(),
+        "torch_blackwell_sm120_present": True,
+        "torch_cudnn_version": cudnn_version,
         "ctranslate2_cuda_device_count_on_runner": ctranslate2.get_cuda_device_count(),
-        "onnxruntime_available_providers": onnxruntime.get_available_providers(),
+        "onnxruntime_available_providers": onnxruntime_providers,
+        "onnxruntime_cuda_provider_present": True,
         "dll_search_dirs": [str(path) for path in existing],
         "critical_files": {
             str(path.relative_to(contents)): {
