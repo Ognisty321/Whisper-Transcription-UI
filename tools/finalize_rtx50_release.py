@@ -200,7 +200,7 @@ pobrania. W katalogu znajdują się również BUILD-INFO.json i SHA256SUMS.txt.
 
     checksum_targets: list[Path] = [executable, readme_path, build_info_path, runtime_package_path]
     for relative in critical_files:
-        target = bundle / Path(relative.replace("\\", os.sep))
+        target = bundle / "_xxl_data" / Path(relative.replace("\\", os.sep))
         if not target.is_file():
             raise FileNotFoundError(target)
         checksum_targets.append(target)
