@@ -1,0 +1,39 @@
+name: Test extended Faster-Whisper-XXL modernization
+
+on:
+  push:
+    branches:
+      - automation/full-modernization-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up latest CPython 3.10 security patch
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.21'
+      - name: Build and integration-test extended modernization
+        shell: pwsh
+        run: |
+          ./tools/build_extended_candidate.ps1 *>&1 | Tee-Object -FilePath extended-console.txt
+      - name: Preserve console log
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path extended-report | Out-Null
+          if (Test-Path extended-console.txt) { Copy-Item extended-console.txt extended-report\extended-console.txt -Force }
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-extended-modernization-report
+          path: extended-report
+          if-no-files-found: error
+          retention-days: 14
