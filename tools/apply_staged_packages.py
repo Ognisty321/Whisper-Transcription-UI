@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import re
 import shutil
 from pathlib import Path
@@ -53,73 +52,179 @@ def infer_top_levels(stage: Path, dist_info: Path) -> set[str]:
 
 
 def remove_old_distribution(contents: Path, dist_name: str) -> list[str]:
-    removed=[]
-    nd=norm_dist(dist_name)
+    removed = []
+    nd = norm_dist(dist_name)
     for child in list(contents.iterdir()):
         if child.is_dir() and child.name.endswith((".dist-info", ".egg-info")):
-            stem=child.name.rsplit(".dist-info",1)[0].rsplit(".egg-info",1)[0]
-            # remove trailing version by comparing normalized prefix
-            if norm_dist(stem).startswith(nd + "-") or norm_dist(stem)==nd:
-                shutil.rmtree(child, ignore_errors=True); removed.append(child.name)
+            stem = child.name.rsplit(".dist-info", 1)[0].rsplit(".egg-info", 1)[0]
+            if norm_dist(stem).startswith(nd + "-") or norm_dist(stem) == nd:
+                shutil.rmtree(child, ignore_errors=True)
+                removed.append(child.name)
     return removed
 
 
 def remove_top_level(contents: Path, top: str) -> list[str]:
-    removed=[]
-    candidates=[contents/top]
-    p=Path(top)
+    removed = []
+    candidates = [contents / top]
+    p = Path(top)
     if p.suffix in {".py", ".pyc", ".pyd", ".dll"}:
-        stem=p.stem
-        candidates += [contents/(stem+".py"), contents/(stem+".pyc")]
+        stem = p.stem
+        candidates += [contents / (stem + ".py"), contents / (stem + ".pyc")]
     else:
-        candidates += [contents/(top+".py"), contents/(top+".pyc")]
-    seen=set()
+        candidates += [contents / (top + ".py"), contents / (top + ".pyc")]
+    seen = set()
     for c in candidates:
-        try: key=c.resolve()
-        except Exception: key=c
-        if key in seen: continue
+        try:
+            key = c.resolve()
+        except Exception:
+            key = c
+        if key in seen:
+            continue
         seen.add(key)
         if c.is_dir():
-            shutil.rmtree(c, ignore_errors=False); removed.append(c.name)
+            shutil.rmtree(c, ignore_errors=False)
+            removed.append(c.name)
         elif c.exists():
-            c.unlink(); removed.append(c.name)
+            c.unlink()
+            removed.append(c.name)
     return removed
 
 
+TORCHAUDIO_IO_COMPAT = r'''
+
+# XXL compatibility backport -------------------------------------------------
+# pyannote.audio 3.x still uses the legacy TorchAudio file-I/O API. TorchAudio
+# deprecated it in 2.8 and removed it in 2.9+, while RTX 50 support requires a
+# much newer coherent Torch/TorchAudio stack. Keep pyannote 3.x's public API
+# (which the custom XXL bytecode expects) and emulate only the removed I/O
+# surface through SoundFile. Resampling still uses torchaudio.functional.
+if not hasattr(torchaudio, "AudioMetaData") or not hasattr(torchaudio, "load"):
+    from typing import NamedTuple as _XXLNamedTuple
+    import re as _xxl_re
+    import soundfile as _xxl_sf
+    import torch as _xxl_torch
+
+    class _XXLAudioMetaData(_XXLNamedTuple):
+        sample_rate: int
+        num_frames: int
+        num_channels: int
+        bits_per_sample: int
+        encoding: str
+
+    def _xxl_bits_per_sample(subtype):
+        subtype = subtype or ""
+        match = _xxl_re.search(r"(8|16|24|32|64)", subtype)
+        return int(match.group(1)) if match else 0
+
+    def _xxl_audio_info(uri, backend=None, format=None):
+        info = _xxl_sf.info(uri)
+        return _XXLAudioMetaData(
+            sample_rate=int(info.samplerate),
+            num_frames=int(info.frames),
+            num_channels=int(info.channels),
+            bits_per_sample=_xxl_bits_per_sample(info.subtype),
+            encoding=str(info.subtype or info.format or ""),
+        )
+
+    def _xxl_audio_load(
+        uri,
+        frame_offset=0,
+        num_frames=-1,
+        normalize=True,
+        channels_first=True,
+        format=None,
+        buffer_size=4096,
+        backend=None,
+    ):
+        frames = -1 if num_frames is None or int(num_frames) < 0 else int(num_frames)
+        data, sample_rate = _xxl_sf.read(
+            uri,
+            start=max(0, int(frame_offset)),
+            frames=frames,
+            dtype="float32",
+            always_2d=True,
+        )
+        if channels_first:
+            data = data.T.copy()
+        else:
+            data = data.copy()
+        return _xxl_torch.from_numpy(data), int(sample_rate)
+
+    if not hasattr(torchaudio, "AudioMetaData"):
+        torchaudio.AudioMetaData = _XXLAudioMetaData
+    if not hasattr(torchaudio, "list_audio_backends"):
+        torchaudio.list_audio_backends = lambda: ["soundfile"]
+    if not hasattr(torchaudio, "info"):
+        torchaudio.info = _xxl_audio_info
+    if not hasattr(torchaudio, "load"):
+        torchaudio.load = _xxl_audio_load
+# End XXL compatibility backport ---------------------------------------------
+'''
+
+
+def patch_pyannote_for_modern_torchaudio(contents: Path) -> dict:
+    io_path = contents / "pyannote" / "audio" / "core" / "io.py"
+    result = {"path": str(io_path), "patched": False}
+    if not io_path.is_file():
+        result["reason"] = "pyannote audio io.py not present"
+        return result
+    text = io_path.read_text(encoding="utf-8", errors="strict")
+    if "XXL compatibility backport" in text:
+        result["reason"] = "already patched"
+        return result
+    marker = "import torchaudio\n"
+    if marker not in text:
+        result["reason"] = "torchaudio import marker not found"
+        return result
+    text = text.replace(marker, marker + TORCHAUDIO_IO_COMPAT, 1)
+    io_path.write_text(text, encoding="utf-8")
+    result["patched"] = True
+    result["reason"] = "legacy AudioMetaData/list_audio_backends/info/load emulated via SoundFile"
+    return result
+
+
 def main() -> int:
-    ap=argparse.ArgumentParser()
+    ap = argparse.ArgumentParser()
     ap.add_argument("stage", type=Path)
     ap.add_argument("contents", type=Path)
     ap.add_argument("--report", type=Path, required=True)
-    args=ap.parse_args()
-    stage=args.stage.resolve(); contents=args.contents.resolve()
-    if not stage.is_dir(): raise NotADirectoryError(stage)
-    if not contents.is_dir(): raise NotADirectoryError(contents)
+    args = ap.parse_args()
+    stage = args.stage.resolve()
+    contents = args.contents.resolve()
+    if not stage.is_dir():
+        raise NotADirectoryError(stage)
+    if not contents.is_dir():
+        raise NotADirectoryError(contents)
 
-    report={"stage":str(stage),"contents":str(contents),"distributions":[]}
-    dist_infos=sorted(stage.glob("*.dist-info"), key=lambda p:p.name.lower())
+    report = {"stage": str(stage), "contents": str(contents), "distributions": []}
+    dist_infos = sorted(stage.glob("*.dist-info"), key=lambda p: p.name.lower())
     for di in dist_infos:
-        dist=dist_name_from_metadata(di)
-        tops=sorted(infer_top_levels(stage,di))
-        entry={"distribution":dist,"dist_info":di.name,"top_levels":tops,"removed":[]}
-        entry["removed"].extend(remove_old_distribution(contents,dist))
+        dist = dist_name_from_metadata(di)
+        tops = sorted(infer_top_levels(stage, di))
+        entry = {"distribution": dist, "dist_info": di.name, "top_levels": tops, "removed": []}
+        entry["removed"].extend(remove_old_distribution(contents, dist))
         for top in tops:
-            # Never delete generic shared executable/data directories.
-            if top in {"bin", "Scripts"}: continue
-            entry["removed"].extend(remove_top_level(contents,top))
+            if top in {"bin", "Scripts"}:
+                continue
+            entry["removed"].extend(remove_top_level(contents, top))
         report["distributions"].append(entry)
 
-    # Copy the complete stage after removing the old package trees.
     for child in stage.iterdir():
-        dst=contents/child.name
+        dst = contents / child.name
         if child.is_dir():
-            shutil.copytree(child,dst,dirs_exist_ok=True)
+            shutil.copytree(child, dst, dirs_exist_ok=True)
         else:
-            shutil.copy2(child,dst)
+            shutil.copy2(child, dst)
 
-    args.report.parent.mkdir(parents=True,exist_ok=True)
-    args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
-    print(json.dumps(report,ensure_ascii=False,indent=2))
+    report["compatibility_patches"] = {
+        "pyannote_torchaudio_legacy_io": patch_pyannote_for_modern_torchaudio(contents)
+    }
+
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
-if __name__=="__main__": raise SystemExit(main())
+
+if __name__ == "__main__":
+    raise SystemExit(main())
