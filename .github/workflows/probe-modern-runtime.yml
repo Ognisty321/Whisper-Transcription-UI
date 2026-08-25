@@ -18,7 +18,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: pip
 
       - name: Download and extract original release
         shell: pwsh
@@ -87,7 +86,7 @@ jobs:
           Get-ChildItem wheels -Filter *.whl | ForEach-Object {
             $dest = Join-Path stage $_.BaseName
             New-Item -ItemType Directory -Force -Path $dest | Out-Null
-            Expand-Archive -Path $_.FullName -DestinationPath $dest -Force
+            python -m zipfile -e $_.FullName $dest
             "===== $($_.Name) =====" | Add-Content report\wheel-files.txt
             Get-ChildItem $dest -Recurse -File | ForEach-Object { $_.FullName.Substring($dest.Length).TrimStart('\') } | Sort-Object | Add-Content report\wheel-files.txt
             Get-ChildItem $dest -Recurse -File -Filter METADATA | ForEach-Object {
@@ -105,6 +104,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path report | Out-Null
           Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,2)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}} | Format-Table -AutoSize | Out-String | Set-Content report\disk.txt
 
       - name: Upload probe report
