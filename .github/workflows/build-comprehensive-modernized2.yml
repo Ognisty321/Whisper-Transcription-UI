@@ -1,0 +1,51 @@
+name: Build comprehensive Modernized 2 Windows release
+
+on:
+  push:
+    branches:
+      - automation/comprehensive-build-candidate-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    steps:
+      - name: Check out modernization tools
+        uses: actions/checkout@v4
+
+      - name: Set up bootstrap Python 3.10.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Build, test, package, and host the complete application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & .\tools\build_comprehensive_release.ps1 *>&1 | Tee-Object -FilePath comprehensive-build-console.txt
+          $exit = $LASTEXITCODE
+          if ($null -eq $exit) { $exit = if ($?) { 0 } else { 1 } }
+          "build_exit=$exit" | Set-Content comprehensive-build-exit.txt
+          if ($exit -ne 0) { throw "Comprehensive build failed: $exit" }
+
+      - name: Preserve console and disk diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path modern2-report | Out-Null
+          if (Test-Path comprehensive-build-console.txt) { Copy-Item comprehensive-build-console.txt modern2-report\comprehensive-build-console.txt -Force }
+          if (Test-Path comprehensive-build-exit.txt) { Copy-Item comprehensive-build-exit.txt modern2-report\comprehensive-build-exit.txt -Force }
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,2)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}} | Format-Table -AutoSize | Out-String | Set-Content modern2-report\disk.txt
+
+      - name: Upload comprehensive build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-modernized2-build-report
+          path: modern2-report
+          if-no-files-found: error
+          retention-days: 30
