@@ -1,0 +1,62 @@
+name: Prove source-built CPython 3.10.21 Windows runtime
+
+on:
+  push:
+    branches:
+      - automation/python31021-source-proof-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+      - name: Build official CPython 3.10.21 source on Windows x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path report | Out-Null
+          git clone --depth 1 --branch v3.10.21 https://github.com/python/cpython.git cpython31021
+          Push-Location cpython31021
+          try {
+            & .\PCbuild\build.bat -p x64 -c Release -e *>&1 | Tee-Object -FilePath ..\report\cpython-build.txt
+            if ($LASTEXITCODE -ne 0) { throw "CPython build failed: $LASTEXITCODE" }
+          } finally { Pop-Location }
+          $py=(Resolve-Path 'cpython31021\PCbuild\amd64\python.exe').Path
+          & $py -c "import sys,importlib.util,ssl,sqlite3,zlib,json; print(json.dumps({'version':sys.version,'magic':importlib.util.MAGIC_NUMBER.hex(),'openssl':ssl.OPENSSL_VERSION,'sqlite':sqlite3.sqlite_version,'zlib':zlib.ZLIB_VERSION},indent=2))" *>&1 | Tee-Object -FilePath report\runtime.json
+          if ($LASTEXITCODE -ne 0) { throw 'Built Python runtime check failed' }
+          $runtime=Get-Content report\runtime.json -Raw | ConvertFrom-Json
+          if ($runtime.version -notmatch '^3\.10\.21') { throw "Unexpected Python: $($runtime.version)" }
+          if ($runtime.magic -ne '6f0d0d0a') { throw "Bytecode magic mismatch: $($runtime.magic)" }
+          if ($runtime.openssl -notmatch 'OpenSSL 1\.1\.1w') { throw "Unexpected OpenSSL: $($runtime.openssl)" }
+      - name: Prove pip and PyInstaller on source-built runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $py=(Resolve-Path 'cpython31021\PCbuild\amd64\python.exe').Path
+          & $py -m ensurepip --upgrade *>&1 | Tee-Object -FilePath report\ensurepip.txt
+          if ($LASTEXITCODE -ne 0) { throw 'ensurepip failed' }
+          & $py -m pip install --disable-pip-version-check --no-input 'pyinstaller==6.22.2' *>&1 | Tee-Object -FilePath report\pip-pyinstaller.txt
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller install failed' }
+          'import sys, ssl; print(sys.version); print(ssl.OPENSSL_VERSION)' | Set-Content hello.py -Encoding ascii
+          & $py -m PyInstaller --noconfirm --clean --onedir --console --name hello31021 hello.py *>&1 | Tee-Object -FilePath report\pyinstaller-build.txt
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
+          & .\dist\hello31021\hello31021.exe *>&1 | Tee-Object -FilePath report\hello-output.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Built EXE failed' }
+          $out=Get-Content report\hello-output.txt -Raw
+          if ($out -notmatch '3\.10\.21' -or $out -notmatch 'OpenSSL 1\.1\.1w') { throw 'Built EXE did not use expected runtime' }
+      - name: Upload source-runtime proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python31021-windows-source-proof
+          path: report
+          if-no-files-found: error
+          retention-days: 7
