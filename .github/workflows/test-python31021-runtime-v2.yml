@@ -1,0 +1,129 @@
+name: Test CPython 3.10.21 security runtime v2
+
+on:
+  push:
+    branches:
+      - automation/python31021-runtime-poc-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Prepare verified original bundle and externalized bytecode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path pysec2-work, pysec2-report | Out-Null
+          $url = 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-all-errors --retry-delay 5 --output pysec2-work\original.7z $url
+          if ($LASTEXITCODE -ne 0) { throw "download failed: $LASTEXITCODE" }
+          if ((Get-Item pysec2-work\original.7z).Length -ne 1424256246) { throw 'unexpected size' }
+          if ((Get-FileHash pysec2-work\original.7z -Algorithm SHA256).Hash -ne '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844') { throw 'unexpected hash' }
+          7z.exe x pysec2-work\original.7z -opysec2-work\extracted -y | Set-Content pysec2-report\7z.txt
+          if ($LASTEXITCODE -ne 0) { throw "extract failed: $LASTEXITCODE" }
+          Remove-Item pysec2-work\original.7z -Force
+          $root = (Resolve-Path 'pysec2-work\extracted\Faster-Whisper-XXL').Path
+          $root | Set-Content pysec2-report\bundle-root.txt
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.22.2
+          $contents = Join-Path $root '_xxl_data'
+          python tools\externalize_pyz.py (Join-Path $root 'faster-whisper-xxl.exe') $contents --scripts-dir (Join-Path $contents 'xxl_original_scripts') --manifest (Join-Path $contents 'xxl_externalization_manifest.json') | Tee-Object pysec2-report\externalize.txt
+          if ($LASTEXITCODE -ne 0) { throw "externalize failed: $LASTEXITCODE" }
+
+      - name: Build official CPython 3.10.21 x64 source release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 --branch v3.10.21 https://github.com/python/cpython.git pysec2-work\cpython
+          Push-Location pysec2-work\cpython
+          try {
+            & .\PCbuild\build.bat -p x64 -c Release *>&1 | Tee-Object "$env:GITHUB_WORKSPACE\pysec2-report\cpython-build.txt"
+            $rc = $LASTEXITCODE
+          } finally { Pop-Location }
+          if ($rc -ne 0) { throw "CPython build failed: $rc" }
+          $py = (Resolve-Path 'pysec2-work\cpython\PCbuild\amd64\python.exe').Path
+          & $py -c "import json,ssl,sqlite3,sys,zlib; print(json.dumps({'python':sys.version,'openssl':ssl.OPENSSL_VERSION,'sqlite':sqlite3.sqlite_version,'zlib':zlib.ZLIB_VERSION},indent=2))" | Set-Content pysec2-report\built-runtime.json
+          if ($LASTEXITCODE -ne 0) { throw 'built runtime probe failed' }
+          Push-Location pysec2-work\cpython
+          try {
+            & $py -m ensurepip --upgrade | Set-Content "$env:GITHUB_WORKSPACE\pysec2-report\ensurepip.txt"
+            & $py -m pip install --disable-pip-version-check --no-input pyinstaller==6.22.2 | Set-Content "$env:GITHUB_WORKSPACE\pysec2-report\pip-pyinstaller.txt"
+            if ($LASTEXITCODE -ne 0) { throw 'PyInstaller install failed' }
+          } finally { Pop-Location }
+
+      - name: Rebuild launcher and package the complete CPython 3.10.21 runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content pysec2-report\bundle-root.txt -Raw).Trim()
+          $contents = Join-Path $root '_xxl_data'
+          $py = (Resolve-Path 'pysec2-work\cpython\PCbuild\amd64\python.exe').Path
+          Push-Location pysec2-work\cpython
+          try {
+            & $py -m PyInstaller --noconfirm --clean --onedir --console --name faster-whisper-xxl --contents-directory _xxl_data --distpath "$env:GITHUB_WORKSPACE\pysec2-work\launcher-dist" --workpath "$env:GITHUB_WORKSPACE\pysec2-work\launcher-build" --specpath "$env:GITHUB_WORKSPACE\pysec2-work\launcher-spec" "$env:GITHUB_WORKSPACE\tools\xxl_launcher.py" *>&1 | Tee-Object "$env:GITHUB_WORKSPACE\pysec2-report\pyinstaller-build.txt"
+            $rc = $LASTEXITCODE
+          } finally { Pop-Location }
+          if ($rc -ne 0) { throw "launcher build failed: $rc" }
+          $launcher = (Resolve-Path 'pysec2-work\launcher-dist\faster-whisper-xxl').Path
+          Copy-Item (Join-Path $launcher 'faster-whisper-xxl.exe') (Join-Path $root 'faster-whisper-xxl.exe') -Force
+          Copy-Item (Join-Path $launcher '_xxl_data\*') $contents -Recurse -Force
+
+          $lib = (Resolve-Path 'pysec2-work\cpython\Lib').Path
+          $exclude = @('site-packages','test','ensurepip','idlelib','__pycache__')
+          Get-ChildItem $lib -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object { Copy-Item $_.FullName $contents -Recurse -Force }
+          $amd64 = (Resolve-Path 'pysec2-work\cpython\PCbuild\amd64').Path
+          Get-ChildItem $amd64 -File -Include *.pyd,*.dll | Copy-Item -Destination $contents -Force
+
+          $sslPyd = Join-Path $amd64 '_ssl.pyd'
+          (& dumpbin.exe /dependents $sslPyd) | Set-Content pysec2-report\ssl-dependencies.txt
+          $depNames = (& dumpbin.exe /dependents $sslPyd) | ForEach-Object {
+            if ($_ -match '^\s+([^\s]+\.dll)\s*$') { $Matches[1] }
+          } | Where-Object { $_ -match '^(libssl|libcrypto)' } | Select-Object -Unique
+          foreach ($dep in $depNames) {
+            $candidate = Get-ChildItem pysec2-work\cpython -Recurse -File -Filter $dep | Where-Object { $_.FullName -match '(amd64|x64)' } | Select-Object -First 1
+            if (-not $candidate) { throw "OpenSSL dependency not found: $dep" }
+            Copy-Item $candidate.FullName (Join-Path $contents $dep) -Force
+          }
+          if (-not $depNames) { throw 'No OpenSSL dependencies detected for _ssl.pyd' }
+          Get-ChildItem $contents -File | Where-Object { $_.Name -match '^(python|libssl|libcrypto|sqlite3|libffi|_ssl|_hashlib)' } | Select-Object Name,Length,@{n='FileVersion';e={$_.VersionInfo.FileVersion}},@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} | Export-Csv pysec2-report\packaged-runtime.csv -NoTypeInformation -Encoding utf8
+
+      - name: CLI and HTTPS end-to-end tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content pysec2-report\bundle-root.txt -Raw).Trim()
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          Push-Location $root
+          try {
+            & $exe --help *> "$env:GITHUB_WORKSPACE\pysec2-report\help.txt"; if ($LASTEXITCODE -ne 0) { throw '--help failed' }
+            & $exe --version *> "$env:GITHUB_WORKSPACE\pysec2-report\version.txt"; if ($LASTEXITCODE -ne 0) { throw '--version failed' }
+            & $exe --checkcuda *> "$env:GITHUB_WORKSPACE\pysec2-report\checkcuda.txt"; if ($LASTEXITCODE -ne 0) { throw '--checkcuda failed' }
+          } finally { Pop-Location }
+          New-Item -ItemType Directory -Force -Path pysec2-report\inference, pysec2-work\models | Out-Null
+          $wav = (Resolve-Path pysec2-report).Path + '\decoder-test.wav'
+          python tools\generate_test_wav.py $wav
+          & $exe $wav --model tiny.en --model_dir (Resolve-Path pysec2-work\models).Path --device cpu --compute_type int8 --output_dir (Resolve-Path pysec2-report\inference).Path --output_format txt --verbose false *>&1 | Tee-Object pysec2-report\inference-log.txt
+          if ($LASTEXITCODE -ne 0) { throw "inference failed: $LASTEXITCODE" }
+          $out = Join-Path (Resolve-Path pysec2-report\inference).Path 'decoder-test.txt'
+          if (-not (Test-Path $out) -or (Get-Item $out).Length -eq 0) { throw 'empty inference output' }
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-python31021-runtime-poc-v2
+          path: pysec2-report
+          if-no-files-found: error
+          retention-days: 14
