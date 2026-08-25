@@ -1,0 +1,100 @@
+name: Test CPython 3.10.21 with OpenSSL 3.5.7
+
+on:
+  push:
+    branches:
+      - automation/python31021-openssl357-poc-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Check out tools
+        uses: actions/checkout@v4
+
+      - name: Set up bootstrap Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Build CPython with OpenSSL 3.5.7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path ossl-work, ossl-report | Out-Null
+          git clone --depth 1 --branch v3.10.21 https://github.com/python/cpython.git ossl-work\cpython
+          if ($LASTEXITCODE -ne 0) { throw "CPython clone failed: $LASTEXITCODE" }
+          git clone --depth 1 --branch openssl-bin-3.5 https://github.com/python/cpython-bin-deps.git ossl-work\cpython\externals\openssl-bin-3.5
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL bin-deps clone failed: $LASTEXITCODE" }
+
+          $pythonProps = 'ossl-work\cpython\PCbuild\python.props'
+          $props = Get-Content $pythonProps -Raw
+          $props = $props.Replace('openssl-bin-1.1.1w\$(ArchName)\', 'openssl-bin-3.5\$(ArchName)\')
+          Set-Content $pythonProps $props -Encoding utf8
+
+          $opensslProps = 'ossl-work\cpython\PCbuild\openssl.props'
+          $sslProps = Get-Content $opensslProps -Raw
+          $sslProps = $sslProps.Replace('<_DLLSuffix>-1_1</_DLLSuffix>', '<_DLLSuffix>-3</_DLLSuffix>')
+          Set-Content $opensslProps $sslProps -Encoding utf8
+
+          Push-Location ossl-work\cpython
+          try {
+            & .\PCbuild\build.bat -p x64 -c Release *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\cpython-build.txt"
+            $buildExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($buildExit -ne 0) { throw "CPython build failed: $buildExit" }
+
+      - name: Verify TLS runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Resolve-Path 'ossl-work\cpython\PCbuild\amd64\python.exe').Path
+          & $py tools\probe_tls_runtime.py | Set-Content ossl-report\runtime.json
+          if ($LASTEXITCODE -ne 0) { throw "Runtime/TLS verification failed: $LASTEXITCODE" }
+          $runtime = Get-Content ossl-report\runtime.json -Raw | ConvertFrom-Json
+          if (-not $runtime.openssl.StartsWith('OpenSSL 3.5.7')) { throw "Unexpected OpenSSL: $($runtime.openssl)" }
+          if ($runtime.https_status -ne 200) { throw "HTTPS request failed: $($runtime.https_status)" }
+          Get-ChildItem ossl-work\cpython\PCbuild\amd64 -File | Where-Object { $_.Name -match '^(python310|python3|_ssl|_hashlib|libssl|libcrypto|sqlite3)' } | Select-Object Name,Length,@{n='FileVersion';e={$_.VersionInfo.FileVersion}},@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} | Export-Csv ossl-report\runtime-files.csv -NoTypeInformation -Encoding utf8
+
+      - name: Build and run frozen TLS proof
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Resolve-Path 'ossl-work\cpython\PCbuild\amd64\python.exe').Path
+          Push-Location ossl-work\cpython
+          try {
+            & $py -m ensurepip --upgrade *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\ensurepip.txt"
+            if ($LASTEXITCODE -ne 0) { throw "ensurepip failed: $LASTEXITCODE" }
+            & $py -m pip install --disable-pip-version-check --no-input pyinstaller==6.22.1 *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\pip-pyinstaller.txt"
+            if ($LASTEXITCODE -ne 0) { throw "PyInstaller install failed: $LASTEXITCODE" }
+            & $py -m PyInstaller --noconfirm --clean --onedir --console `
+              --name tls-probe `
+              --distpath "$env:GITHUB_WORKSPACE\ossl-work\dist" `
+              --workpath "$env:GITHUB_WORKSPACE\ossl-work\build" `
+              --specpath "$env:GITHUB_WORKSPACE\ossl-work\spec" `
+              "$env:GITHUB_WORKSPACE\tools\tls_probe_app.py" *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\pyinstaller-build.txt"
+            $freezeExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($freezeExit -ne 0) { throw "PyInstaller proof build failed: $freezeExit" }
+          & ossl-work\dist\tls-probe\tls-probe.exe *>&1 | Tee-Object -FilePath ossl-report\frozen-tls-probe.txt
+          if ($LASTEXITCODE -ne 0) { throw "Frozen TLS probe failed: $LASTEXITCODE" }
+          $probe = Get-Content ossl-report\frozen-tls-probe.txt -Raw
+          if ($probe -notmatch 'OpenSSL 3\.5\.7' -or $probe -notmatch 'https_status=200') { throw 'Frozen probe did not confirm OpenSSL 3.5.7 and HTTPS' }
+
+      - name: Upload OpenSSL proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpython31021-openssl357-proof
+          path: ossl-report
+          if-no-files-found: error
+          retention-days: 14
