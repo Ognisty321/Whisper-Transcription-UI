@@ -38,21 +38,8 @@ jobs:
       - name: Summarize selected distributions
         shell: pwsh
         run: |
-          @'
-import json
-from pathlib import Path
-report = json.loads(Path('resolve-report/pip-resolution.json').read_text(encoding='utf-8'))
-rows = []
-for item in report.get('install', []):
-    metadata = item.get('metadata', {})
-    rows.append((metadata.get('name'), metadata.get('version'), item.get('download_info', {}).get('url')))
-rows.sort(key=lambda row: (str(row[0]).lower(), str(row[1])))
-Path('resolve-report/selected.tsv').write_text(
-    'name\tversion\turl\n' + '\n'.join('\t'.join(str(value or '') for value in row) for row in rows) + '\n',
-    encoding='utf-8',
-)
-print(f'resolved_distributions={len(rows)}')
-'@ | python -
+          python tools\summarize_pip_report.py resolve-report\pip-resolution.json resolve-report\selected.tsv
+          if ($LASTEXITCODE -ne 0) { throw "Resolution summary failed: $LASTEXITCODE" }
 
       - name: Upload resolution report
         if: always()
