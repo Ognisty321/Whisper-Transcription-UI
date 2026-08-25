@@ -1,0 +1,49 @@
+name: Verify FileDitch download with GET
+
+on:
+  push:
+    branches:
+      - automation/fileditch-get-verify-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOWNLOAD_URL: https://fileditchfiles.st/beta24/28abedbe9e0eab67372a/Faster-Whisper-XXL_r245.4_RTX50_CUDA128_2026-08-25.zip
+    steps:
+      - name: Fetch initial ZIP bytes with GET
+        shell: bash
+        run: |
+          set +e
+          mkdir -p report
+          curl --location --range 0-1048575 --limit-rate 2M --max-time 30 --connect-timeout 15 \
+            --dump-header report/headers.txt --output report/part.bin "$DOWNLOAD_URL"
+          rc=$?
+          echo "$rc" > report/curl-exit.txt
+          set -e
+          python - <<'PY'
+          from pathlib import Path
+          data = Path('report/part.bin').read_bytes() if Path('report/part.bin').exists() else b''
+          Path('report/result.txt').write_text(
+              f'bytes_received={len(data)}\nmagic_hex={data[:8].hex()}\n', encoding='utf-8'
+          )
+          if len(data) < 4:
+              raise SystemExit('No response body received')
+          if data[:4] not in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
+              raise SystemExit(f'Response is not a ZIP stream; first bytes={data[:32]!r}')
+          print(f'GET verification passed: received {len(data)} bytes, ZIP magic {data[:4]!r}')
+          PY
+
+      - name: Upload GET verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fileditch-get-verification
+          path: report
+          if-no-files-found: error
+          retention-days: 7
