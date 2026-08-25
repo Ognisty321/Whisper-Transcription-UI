@@ -1,0 +1,63 @@
+name: Export faster-whisper core bytecode
+
+on:
+  push:
+    branches:
+      - automation/fw-core-analysis-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Download, verify, extract, and externalize
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path fw-work, fw-report\original-faster-whisper | Out-Null
+          $url = 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-all-errors --retry-delay 5 --output fw-work\original.7z $url
+          if ($LASTEXITCODE -ne 0) { throw "Download failed: $LASTEXITCODE" }
+          if ((Get-Item fw-work\original.7z).Length -ne 1424256246) { throw 'Unexpected size' }
+          if ((Get-FileHash fw-work\original.7z -Algorithm SHA256).Hash -ne '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844') { throw 'Unexpected hash' }
+          7z.exe x fw-work\original.7z -ofw-work\extracted -y | Out-Null
+          Remove-Item fw-work\original.7z -Force
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0
+          $root = (Resolve-Path 'fw-work\extracted\Faster-Whisper-XXL').Path
+          $contents = Join-Path $root '_xxl_data'
+          python tools\externalize_pyz.py (Join-Path $root 'faster-whisper-xxl.exe') $contents `
+            --scripts-dir (Join-Path $contents 'xxl_original_scripts') `
+            --manifest (Join-Path $contents 'xxl_externalization_manifest.json') `
+            | Set-Content fw-report\externalize.txt
+          if ($LASTEXITCODE -ne 0) { throw "Externalization failed: $LASTEXITCODE" }
+          Copy-Item (Join-Path $contents 'faster_whisper\*') fw-report\original-faster-whisper -Recurse -Force
+          python tools\index_pyc_api.py (Join-Path $contents 'faster_whisper') --output fw-report\original-faster-whisper-api.json
+
+      - name: Export upstream 1.1.1 and 1.2.1 source trees
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 --branch v1.1.1 https://github.com/SYSTRAN/faster-whisper.git fw-work\upstream-1.1.1
+          git clone --depth 1 --branch v1.2.1 https://github.com/SYSTRAN/faster-whisper.git fw-work\upstream-1.2.1
+          Copy-Item fw-work\upstream-1.1.1\faster_whisper fw-report\upstream-1.1.1 -Recurse
+          Copy-Item fw-work\upstream-1.2.1\faster_whisper fw-report\upstream-1.2.1 -Recurse
+
+      - name: Upload core comparison bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-core-bytecode-comparison
+          path: fw-report
+          if-no-files-found: error
+          retention-days: 14
