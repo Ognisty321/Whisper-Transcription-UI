@@ -135,25 +135,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path report\inference, work\models | Out-Null
-          $wav = (Resolve-Path report).Path + '\\spoken-test.wav'
-          try {
-            Add-Type -AssemblyName System.Speech
-            $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-            $synth.SetOutputToWaveFile($wav)
-            $synth.Speak('This is a Faster Whisper compatibility test.')
-            $synth.Dispose()
-          } catch {
-            @'
-import math, struct, wave
-path = r"report\spoken-test.wav"
-rate = 16000
-with wave.open(path, "wb") as w:
-    w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
-    samples = [int(10000 * math.sin(2 * math.pi * 440 * i / rate)) for i in range(rate * 2)]
-    w.writeframes(b"".join(struct.pack("<h", x) for x in samples))
-'@ | python -
-          }
-
+          $wav = (Resolve-Path report).Path + '\\decoder-test.wav'
+          python tools\generate_test_wav.py $wav
           $root = (Get-Content report\bundle-root.txt) -replace '^bundle_root=', ''
           $exe = Join-Path $root 'faster-whisper-xxl.exe'
           & $exe $wav `
