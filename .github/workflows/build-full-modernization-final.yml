@@ -1,0 +1,95 @@
+name: Build final Faster-Whisper-XXL full modernization
+
+on:
+  push:
+    branches:
+      - automation/full-modernization-final-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 300
+    steps:
+      - name: Check out modernization tools
+        uses: actions/checkout@v4
+
+      - name: Set up bootstrap CPython
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Build CPython 3.10.21 for Windows x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          git clone --depth 1 --branch v3.10.21 https://github.com/python/cpython.git cpython31021
+          Push-Location cpython31021
+          try {
+            & .\PCbuild\build.bat -p x64 -c Release -e *>&1 | Tee-Object -FilePath ..\cpython31021-build.txt
+            if ($LASTEXITCODE -ne 0) { throw "CPython build failed: $LASTEXITCODE" }
+          } finally { Pop-Location }
+          $py=(Resolve-Path 'cpython31021\PCbuild\amd64\python.exe').Path
+          & $py -m ensurepip --upgrade
+          if ($LASTEXITCODE -ne 0) { throw 'ensurepip failed' }
+          (Resolve-Path 'cpython31021\PCbuild\amd64').Path | Add-Content $env:GITHUB_PATH
+
+      - name: Prepare compatibility holds and runtime overlay
+        shell: pwsh
+        run: |
+          ./tools/prepare_extended_candidate.ps1
+
+      - name: Build and integration-test complete modernization
+        shell: pwsh
+        run: |
+          python --version
+          ./tools/build_extended_candidate.ps1 *>&1 | Tee-Object -FilePath full-modernization-console.txt
+
+      - name: Verify dependency metadata consistency
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Continue'
+          $old=$env:PYTHONPATH
+          $env:PYTHONPATH=(Resolve-Path 'extended-work\modern-stage').Path
+          python -m pip check *>&1 | Tee-Object -FilePath extended-report\pip-check.txt
+          $rc=$LASTEXITCODE
+          $env:PYTHONPATH=$old
+          if ($rc -ne 0) { throw "pip check failed: $rc" }
+
+      - name: Finalize, ZIP64-test, and upload complete package
+        shell: pwsh
+        run: |
+          ./tools/package_and_host_full_modernization.ps1 *>&1 | Tee-Object -FilePath final-package-console.txt
+
+      - name: Add release links to job summary
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path extended-report | Out-Null
+          if (Test-Path full-modernization-console.txt) { Copy-Item full-modernization-console.txt extended-report\full-modernization-console.txt -Force }
+          if (Test-Path final-package-console.txt) { Copy-Item final-package-console.txt extended-report\final-package-console.txt -Force }
+          if (Test-Path cpython31021-build.txt) { Copy-Item cpython31021-build.txt extended-report\cpython31021-build.txt -Force }
+          '## Faster-Whisper-XXL Full Modernization' | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (Test-Path extended-report\FINAL-DOWNLOAD-LINKS.json) {
+            '```json' | Add-Content $env:GITHUB_STEP_SUMMARY
+            Get-Content extended-report\FINAL-DOWNLOAD-LINKS.json | Add-Content $env:GITHUB_STEP_SUMMARY
+            '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          if (Test-Path extended-report\final-modernization-summary.json) {
+            '### Runtime' | Add-Content $env:GITHUB_STEP_SUMMARY
+            '```json' | Add-Content $env:GITHUB_STEP_SUMMARY
+            Get-Content extended-report\final-modernization-summary.json | Add-Content $env:GITHUB_STEP_SUMMARY
+            '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload final build and hosting report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-full-modernization-final-report
+          path: extended-report
+          if-no-files-found: error
+          retention-days: 30
