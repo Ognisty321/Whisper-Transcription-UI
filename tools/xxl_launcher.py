@@ -14,6 +14,7 @@ from pathlib import Path
 
 def _configure_dll_search(contents: Path) -> None:
     candidates = [
+        contents.parent,  # bundled ffmpeg.exe and any root-level runtime helpers
         contents,
         contents / "ctranslate2",
         contents / "torch" / "lib",
@@ -103,8 +104,6 @@ def _main() -> None:
         category=DeprecationWarning,
     )
 
-    # Reconstruction-only diagnostic. It runs before the original XXL parser,
-    # so it does not alter any upstream/custom command-line options.
     if len(sys.argv) == 2 and sys.argv[1] == "--xxl-runtime-info":
         _runtime_info(contents)
         return
