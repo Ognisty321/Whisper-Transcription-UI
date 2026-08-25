@@ -109,18 +109,17 @@ jobs:
           }
 
       - name: Add report summary
+        if: always()
         shell: pwsh
         run: |
-          "## Faster-Whisper-XXL r245.4 inspection" | Add-Content $env:GITHUB_STEP_SUMMARY
-          "```text" | Add-Content $env:GITHUB_STEP_SUMMARY
-          Get-Content report\download.txt, report\archive.sha256, report\bundle-root.txt | Add-Content $env:GITHUB_STEP_SUMMARY
-          "```" | Add-Content $env:GITHUB_STEP_SUMMARY
-          "### Core GPU/runtime files" | Add-Content $env:GITHUB_STEP_SUMMARY
-          "```text" | Add-Content $env:GITHUB_STEP_SUMMARY
-          Get-Content report\gpu-and-core-files.txt | Select-Object -First 160 | Add-Content $env:GITHUB_STEP_SUMMARY
-          "```" | Add-Content $env:GITHUB_STEP_SUMMARY
+          '## Faster-Whisper-XXL r245.4 inspection' | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (Test-Path report\download.txt) { Get-Content report\download.txt | Add-Content $env:GITHUB_STEP_SUMMARY }
+          if (Test-Path report\archive.sha256) { 'SHA256:' | Add-Content $env:GITHUB_STEP_SUMMARY; Get-Content report\archive.sha256 | Add-Content $env:GITHUB_STEP_SUMMARY }
+          if (Test-Path report\bundle-root.txt) { Get-Content report\bundle-root.txt | Add-Content $env:GITHUB_STEP_SUMMARY }
+          'The complete machine-readable inventory is attached as a workflow artifact.' | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Upload inspection report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: faster-whisper-xxl-r245.4-inspection
