@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Bootstrap the original XXL bytecode from an externalized PyInstaller bundle."""
+"""Bootstrap the original XXL bytecode from a modernized external bundle."""
 
 from __future__ import annotations
 
 import json
 import marshal
 import os
+import ssl
 import sys
 import types
 import warnings
@@ -13,20 +14,29 @@ from pathlib import Path
 
 
 def _configure_dll_search(contents: Path) -> None:
+    application_root = Path(sys.executable).resolve().parent
     candidates = [
+        application_root,
         contents,
         contents / "ctranslate2",
         contents / "torch" / "lib",
         contents / "onnxruntime" / "capi",
+        contents / "av.libs",
+        contents / "numpy.libs",
+        contents / "scipy.libs",
+        contents / "pandas.libs",
     ]
     existing = [str(path) for path in candidates if path.is_dir()]
     if existing:
         os.environ["PATH"] = os.pathsep.join(existing + [os.environ.get("PATH", "")])
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        # Keep handles alive for the lifetime of the process. This makes the
-        # CUDA 12.8 libraries bundled with PyTorch visible to CTranslate2 and
-        # ONNX Runtime before any of those packages is imported.
-        globals()["_XXL_DLL_DIRECTORY_HANDLES"] = [os.add_dll_directory(path) for path in existing]
+        handles = []
+        for path in existing:
+            try:
+                handles.append(os.add_dll_directory(path))
+            except OSError:
+                pass
+        globals()["_XXL_DLL_DIRECTORY_HANDLES"] = handles
 
 
 def _load_code(path: Path) -> types.CodeType:
@@ -35,6 +45,50 @@ def _load_code(path: Path) -> types.CodeType:
     if not isinstance(code, types.CodeType):
         raise TypeError(f"{path} does not contain a Python code object")
     return code
+
+
+def _runtime_info(patch_metadata: dict[str, object]) -> dict[str, object]:
+    import ctranslate2
+    import huggingface_hub
+    import numpy
+    import onnxruntime
+    import tokenizers
+    import torch
+
+    try:
+        torch_arches = torch._C._cuda_getArchFlags()  # type: ignore[attr-defined]
+    except Exception as exc:
+        torch_arches = f"unavailable: {type(exc).__name__}: {exc}"
+
+    info: dict[str, object] = {
+        "release": "Faster-Whisper-XXL r245.4 comprehensive modernization",
+        "python": sys.version,
+        "openssl": ssl.OPENSSL_VERSION,
+        "patches": patch_metadata,
+        "versions": {
+            "torch": torch.__version__,
+            "torch_cuda": torch.version.cuda,
+            "ctranslate2": ctranslate2.__version__,
+            "onnxruntime_gpu": onnxruntime.__version__,
+            "numpy": numpy.__version__,
+            "tokenizers": tokenizers.__version__,
+            "huggingface_hub": huggingface_hub.__version__,
+        },
+        "torch_compiled_arch_flags": torch_arches,
+        "torch_cuda_available": torch.cuda.is_available(),
+        "ctranslate2_cuda_device_count": ctranslate2.get_cuda_device_count(),
+        "onnxruntime_available_providers": onnxruntime.get_available_providers(),
+    }
+    if torch.cuda.is_available():
+        info["cuda_devices"] = [
+            {
+                "index": index,
+                "name": torch.cuda.get_device_name(index),
+                "capability": torch.cuda.get_device_capability(index),
+            }
+            for index in range(torch.cuda.device_count())
+        ]
+    return info
 
 
 def _main() -> None:
@@ -51,21 +105,28 @@ def _main() -> None:
 
     _configure_dll_search(contents)
 
-    # PyInstaller already places its contents directory on sys.path. Put it first
-    # explicitly so the externalized original modules and replaced wheels take
-    # precedence over global/user installations.
     contents_text = str(contents)
-    sys.path[:] = [item for item in sys.path if os.path.abspath(item or os.curdir) != os.path.abspath(contents_text)]
+    sys.path[:] = [
+        item
+        for item in sys.path
+        if os.path.abspath(item or os.curdir) != os.path.abspath(contents_text)
+    ]
     sys.path.insert(0, contents_text)
 
-    # The original PyInstaller 6.12 pkg_resources runtime hook emits a noisy
-    # deprecation warning with newer package metadata. It is not an application
-    # error and should not pollute normal CLI output.
     warnings.filterwarnings(
         "ignore",
         message=r"pkg_resources is deprecated as an API.*",
         category=DeprecationWarning,
     )
+
+    from xxl_runtime_patches import apply_runtime_patches
+
+    patch_metadata = apply_runtime_patches(contents)
+    globals()["_XXL_RUNTIME_PATCH_METADATA"] = patch_metadata
+
+    if "--runtime-info" in sys.argv:
+        print(json.dumps(_runtime_info(patch_metadata), ensure_ascii=False, indent=2))
+        return
 
     namespace = globals()
     namespace["__name__"] = "__main__"
