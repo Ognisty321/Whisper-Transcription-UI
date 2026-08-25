@@ -1,0 +1,111 @@
+name: Build comprehensive modernized Faster-Whisper-XXL
+
+on:
+  push:
+    branches:
+      - automation/comprehensive-modernization-build-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: comprehensive-xxl-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+      TOKENIZERS_PARALLELISM: 'false'
+      PYTHONNOUSERSITE: '1'
+      ARCHIVE_NAME: Faster-Whisper-XXL_r245.4_COMPREHENSIVE_RTX50_CUDA128_2026-08-25.zip
+    steps:
+      - name: Check out modernization tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching bootstrap Python 3.10.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Restore compressed build tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          import gzip
+          from pathlib import Path
+          for name in ('build_comprehensive_xxl.py', 'validate_xxl_stack_v2.py'):
+              compressed = Path('tools') / (name + '.gz')
+              target = Path('tools') / name
+              target.write_bytes(gzip.decompress(compressed.read_bytes()))
+          '@ | python -
+          python -m py_compile tools\build_comprehensive_xxl.py tools\validate_xxl_stack_v2.py
+
+      - name: Record initial runner disk usage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path comprehensive-report | Out-Null
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,2)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}} |
+            Format-Table -AutoSize | Out-String | Set-Content comprehensive-report\disk-before.txt
+
+      - name: Build, modernize, validate, package, and upload the complete application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python tools\build_comprehensive_xxl.py `
+            --archive-name $env:ARCHIVE_NAME `
+            --git-sha $env:GITHUB_SHA `
+            *>&1 | Tee-Object -FilePath comprehensive-build-console.txt
+          $buildExit = $LASTEXITCODE
+          New-Item -ItemType Directory -Force -Path comprehensive-report | Out-Null
+          Copy-Item comprehensive-build-console.txt comprehensive-report\comprehensive-build-console.txt -Force
+          if ($buildExit -ne 0) { throw "Comprehensive build failed with exit code $buildExit" }
+
+      - name: Record final runner disk usage
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path comprehensive-report | Out-Null
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,2)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}} |
+            Format-Table -AutoSize | Out-String | Set-Content comprehensive-report\disk-after.txt
+
+      - name: Publish release summary
+        if: always()
+        shell: pwsh
+        run: |
+          '## Comprehensive Faster-Whisper-XXL modernization' | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (Test-Path comprehensive-report\SUCCESS.json) {
+            $success = Get-Content comprehensive-report\SUCCESS.json -Raw | ConvertFrom-Json
+            'Build: SUCCESS' | Add-Content $env:GITHUB_STEP_SUMMARY
+            "Archive: $($success.archive.filename)" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "Size: $($success.archive.size_bytes) bytes" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "SHA256: $($success.archive.sha256)" | Add-Content $env:GITHUB_STEP_SUMMARY
+            foreach ($property in $success.hosting.hosts.PSObject.Properties) {
+              if ($property.Value.success) {
+                "$($property.Name): $($property.Value.url)" | Add-Content $env:GITHUB_STEP_SUMMARY
+              }
+            }
+          } elseif (Test-Path comprehensive-report\FAILURE.json) {
+            $failure = Get-Content comprehensive-report\FAILURE.json -Raw | ConvertFrom-Json
+            'Build: FAILURE' | Add-Content $env:GITHUB_STEP_SUMMARY
+            "Error: $($failure.error)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            'Build status file was not produced.' | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload comprehensive build and validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-comprehensive-modernization-report
+          path: comprehensive-report
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
