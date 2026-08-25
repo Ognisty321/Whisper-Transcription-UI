@@ -1,0 +1,49 @@
+name: Build and redundantly host Faster-Whisper-XXL RTX 50 release
+
+on:
+  push:
+    branches:
+      - automation/final-rtx50-hosted-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-host:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+    steps:
+      - name: Check out reconstruction tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Rebuild, test, package, and upload the complete application
+        shell: pwsh
+        run: |
+          .\tools\build_and_host_rtx50_release.ps1 *>&1 | Tee-Object -FilePath build-and-host-console.txt
+
+      - name: Preserve console log in report
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path final-report | Out-Null
+          if (Test-Path build-and-host-console.txt) {
+            Copy-Item build-and-host-console.txt final-report\build-and-host-console.txt -Force
+          }
+
+      - name: Upload final build and hosting report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-rtx50-final-hosting-report
+          path: final-report
+          if-no-files-found: error
+          retention-days: 30
