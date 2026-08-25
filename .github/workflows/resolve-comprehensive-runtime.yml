@@ -1,0 +1,64 @@
+name: Resolve comprehensive Windows runtime
+
+on:
+  push:
+    branches:
+      - automation/comprehensive-modernization-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Check out requirements
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Resolve pinned runtime and binary wheel availability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path resolve-report | Out-Null
+          python -m pip install --upgrade pip
+          python -m pip install --dry-run --ignore-installed --only-binary=:all: `
+            --extra-index-url https://download.pytorch.org/whl/cu128 `
+            --report resolve-report\pip-resolution.json `
+            -r requirements\xxl-modern-win-py310.txt `
+            *>&1 | Tee-Object -FilePath resolve-report\pip-resolution.txt
+          if ($LASTEXITCODE -ne 0) { throw "Pinned runtime resolution failed: $LASTEXITCODE" }
+
+      - name: Summarize selected distributions
+        shell: pwsh
+        run: |
+          @'
+import json
+from pathlib import Path
+report = json.loads(Path('resolve-report/pip-resolution.json').read_text(encoding='utf-8'))
+rows = []
+for item in report.get('install', []):
+    metadata = item.get('metadata', {})
+    rows.append((metadata.get('name'), metadata.get('version'), item.get('download_info', {}).get('url')))
+rows.sort(key=lambda row: (str(row[0]).lower(), str(row[1])))
+Path('resolve-report/selected.tsv').write_text(
+    'name\tversion\turl\n' + '\n'.join('\t'.join(str(value or '') for value in row) for row in rows) + '\n',
+    encoding='utf-8',
+)
+print(f'resolved_distributions={len(rows)}')
+'@ | python -
+
+      - name: Upload resolution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-comprehensive-runtime-resolution
+          path: resolve-report
+          if-no-files-found: error
+          retention-days: 14
