@@ -1,9 +1,6 @@
 name: Test extended Faster-Whisper-XXL modernization
 
 on:
-  push:
-    branches:
-      - automation/full-modernization-20260825
   workflow_dispatch:
 
 permissions:
