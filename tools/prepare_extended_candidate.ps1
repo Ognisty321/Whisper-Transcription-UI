@@ -33,10 +33,12 @@ $text = $text.Replace($needle, $insert.TrimEnd())
 $runtimeNeedle = "Status 'Running CLI smoke tests.'"
 $runtimeInsert = @"
 Status 'Verifying packaged CPython 3.10.21 runtime and security libraries.'
-& `$exe --xxl-runtime-info *>&1 | Tee-Object -FilePath (Join-Path `$report 'packaged-runtime-info.json')
+`$runtimeStdout=Join-Path `$report 'packaged-runtime-info.json'
+`$runtimeStderr=Join-Path `$report 'packaged-runtime-info.stderr.txt'
+& `$exe --xxl-runtime-info 2> `$runtimeStderr | Set-Content `$runtimeStdout -Encoding utf8
 `$runtimeRc=`$LASTEXITCODE
 if (`$runtimeRc -ne 0) { throw "Packaged runtime diagnostic failed: `$runtimeRc" }
-`$runtimeInfo=Get-Content (Join-Path `$report 'packaged-runtime-info.json') -Raw | ConvertFrom-Json
+`$runtimeInfo=Get-Content `$runtimeStdout -Raw | ConvertFrom-Json
 if (`$runtimeInfo.python -notmatch '^3\.10\.21') { throw "Packaged Python is not 3.10.21: `$(`$runtimeInfo.python)" }
 if (`$runtimeInfo.python_magic -ne '6f0d0d0a') { throw "Packaged bytecode magic mismatch: `$(`$runtimeInfo.python_magic)" }
 if (`$runtimeInfo.openssl -notmatch 'OpenSSL 1\.1\.1w') { throw "Packaged OpenSSL is not 1.1.1w: `$(`$runtimeInfo.openssl)" }
