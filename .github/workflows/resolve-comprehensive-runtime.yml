@@ -29,7 +29,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path resolve-report | Out-Null
           python -m pip install --upgrade pip
           python -m pip install --dry-run --ignore-installed --only-binary=:all: `
-            --no-binary=antlr4-python3-runtime `
+            --no-binary=antlr4-python3-runtime,docopt `
             --extra-index-url https://download.pytorch.org/whl/cu128 `
             --report resolve-report\pip-resolution.json `
             -r requirements\xxl-modern-win-py310.txt `
