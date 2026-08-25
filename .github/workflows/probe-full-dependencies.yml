@@ -1,0 +1,48 @@
+name: Probe full frozen dependency set
+
+on:
+  push:
+    branches:
+      - automation/full-modernization-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+      - name: Download, verify, and externalize original bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path work, report | Out-Null
+          $url='https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-all-errors --output work\original.7z $url
+          if ((Get-FileHash work\original.7z -Algorithm SHA256).Hash -ne '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844') { throw 'original hash mismatch' }
+          7z.exe x work\original.7z -owork\extracted -y | Out-Null
+          Remove-Item work\original.7z -Force
+          $root=(Resolve-Path work\extracted\Faster-Whisper-XXL).Path
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0 packaging
+          python tools\externalize_pyz.py (Join-Path $root 'faster-whisper-xxl.exe') (Join-Path $root '_xxl_data') --scripts-dir (Join-Path $root '_xxl_data\xxl_original_scripts') --manifest (Join-Path $root '_xxl_data\xxl_externalization_manifest.json')
+          $root | Set-Content report\bundle-root.txt
+      - name: Probe package versions and Python-3.10-compatible PyPI candidates
+        shell: pwsh
+        run: |
+          $root=(Get-Content report\bundle-root.txt -Raw).Trim()
+          python tools\probe_dependency_versions.py (Join-Path $root '_xxl_data') --output report\dependency-versions.json *>&1 | Tee-Object -FilePath report\probe-console.txt
+          & (Join-Path $root 'ffmpeg.exe') -version *>&1 | Out-String -Width 8192 | Set-Content report\ffmpeg-version.txt
+      - name: Upload dependency report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-full-dependency-probe
+          path: report
+          if-no-files-found: error
+          retention-days: 7
