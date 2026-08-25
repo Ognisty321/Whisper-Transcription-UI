@@ -38,9 +38,23 @@ def _find_sequence(
     expected: list[tuple[str, object | None]],
 ) -> list[dis.Instruction] | None:
     instructions = list(dis.get_instructions(code))
+    # ``starts_line`` is set only on the first instruction belonging to a
+    # source line. The diarization lookup is nested in a longer call whose
+    # first instruction starts line 2275, while the three-instruction
+    # subexpression itself has ``starts_line=None``. Track the effective line
+    # inherited from the preceding instruction instead of requiring the first
+    # opcode in the target block to carry the line marker itself.
+    effective_lines: list[int | None] = []
+    current_line: int | None = None
+    for instruction in instructions:
+        if instruction.starts_line is not None:
+            current_line = instruction.starts_line
+        effective_lines.append(current_line)
+
+    matches: list[list[dis.Instruction]] = []
     for index in range(len(instructions) - len(expected) + 1):
         block = instructions[index:index + len(expected)]
-        if block[0].starts_line != first_line:
+        if effective_lines[index] != first_line:
             continue
         valid = True
         for instruction, (opname, argval) in zip(block, expected):
@@ -51,8 +65,13 @@ def _find_sequence(
                 valid = False
                 break
         if valid:
-            return block
-    return None
+            matches.append(block)
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Ambiguous bytecode pattern at effective source line {first_line}: "
+            f"found {len(matches)} matches"
+        )
+    return matches[0] if matches else None
 
 
 def _description(block: list[dis.Instruction]) -> list[str]:
