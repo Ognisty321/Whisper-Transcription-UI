@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Compatibility-preserving runtime fixes for abandoned Faster-Whisper-XXL r245.4.
 
-The bundled Faster-Whisper code is a heavily modified fork based on 1.1.1.  A
+The bundled Faster-Whisper code is a heavily modified fork based on 1.1.1. A
 wholesale replacement with upstream 1.2.1 removes XXL-only options and VAD/MDX
-features.  This module applies the small upstream fixes that are safe to
+features. This module applies the small upstream fixes that are safe to
 backport without replacing the custom transcriber.
 """
 
@@ -30,7 +30,9 @@ def _patch_tokenizer() -> None:
                 "<|nocaptions|>"
             )
 
-        Tokenizer.no_speech = cached_property(no_speech)  # type: ignore[attr-defined]
+        descriptor = cached_property(no_speech)
+        descriptor.__set_name__(Tokenizer, "no_speech")
+        Tokenizer.no_speech = descriptor  # type: ignore[attr-defined]
 
 
 def _patch_suppressed_tokens() -> None:
@@ -44,9 +46,8 @@ def _patch_suppressed_tokens() -> None:
             suppress_tokens.extend(tokenizer.non_speech_tokens)
         elif len(suppress_tokens) == 0:
             suppress_tokens = []
-        else:
-            if not isinstance(suppress_tokens, list):
-                suppress_tokens = list(suppress_tokens)
+        elif not isinstance(suppress_tokens, list):
+            suppress_tokens = list(suppress_tokens)
 
         suppress_tokens.extend(
             [
@@ -222,8 +223,9 @@ def _patch_model_downloads() -> None:
         kwargs = {
             "local_files_only": local_files_only,
             "allow_patterns": allow_patterns,
-            "revision": revision,
         }
+        if revision is not None:
+            kwargs["revision"] = revision
         disabled_tqdm = getattr(utils, "disabled_tqdm", None)
         if disabled_tqdm is not None:
             kwargs["tqdm_class"] = disabled_tqdm
