@@ -1,0 +1,100 @@
+name: Validate reconstructed XXL launcher
+
+on:
+  push:
+    branches:
+      - automation/faster-whisper-xxl-rtx50-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconstruct:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Check out reconstruction tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Download and extract original release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path work, report | Out-Null
+          $url = 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-delay 5 --output work\original.7z $url
+          $hash = (Get-FileHash work\original.7z -Algorithm SHA256).Hash
+          if ($hash -ne '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844') { throw "Unexpected SHA256: $hash" }
+          7z x work\original.7z -owork\extracted -y | Out-Null
+          Remove-Item work\original.7z -Force
+          $root = (Get-ChildItem work\extracted -Directory | Select-Object -First 1).FullName
+          if (-not $root) { throw 'Bundle root not found' }
+          "bundle_root=$root" | Set-Content report\bundle-root.txt
+
+      - name: Externalize original PYZ and scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0
+          $root = (Get-Content report\bundle-root.txt) -replace '^bundle_root=', ''
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          $contents = Join-Path $root '_xxl_data'
+          $scripts = Join-Path $contents 'xxl_original_scripts'
+          $manifest = Join-Path $contents 'xxl_externalization_manifest.json'
+          python tools\externalize_pyz.py $exe $contents --scripts-dir $scripts --manifest $manifest *>&1 | Tee-Object -FilePath report\externalize.txt
+          Copy-Item $manifest report\xxl_externalization_manifest.json
+          (Get-FileHash $exe -Algorithm SHA256).Hash | Set-Content report\original-exe.sha256
+
+      - name: Build and merge reconstructed launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content report\bundle-root.txt) -replace '^bundle_root=', ''
+          pyinstaller --noconfirm --clean --onedir --console `
+            --name faster-whisper-xxl `
+            --contents-directory _xxl_data `
+            --distpath work\launcher-dist `
+            --workpath work\launcher-build `
+            --specpath work\launcher-spec `
+            tools\xxl_launcher.py *>&1 | Tee-Object -FilePath report\pyinstaller-build.txt
+
+          $launcherRoot = (Resolve-Path 'work\launcher-dist\faster-whisper-xxl').Path
+          Copy-Item (Join-Path $launcherRoot 'faster-whisper-xxl.exe') (Join-Path $root 'faster-whisper-xxl.exe') -Force
+          Copy-Item (Join-Path $launcherRoot '_xxl_data\*') (Join-Path $root '_xxl_data') -Recurse -Force
+          (Get-FileHash (Join-Path $root 'faster-whisper-xxl.exe') -Algorithm SHA256).Hash | Set-Content report\reconstructed-exe.sha256
+          Get-ChildItem (Join-Path $root '_xxl_data\xxl_original_scripts') -File | Select-Object Name,Length | Format-Table -AutoSize | Out-String | Set-Content report\scripts.txt
+
+      - name: Smoke-test reconstructed application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = (Get-Content report\bundle-root.txt) -replace '^bundle_root=', ''
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          Push-Location $root
+          try {
+            & $exe --help *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\report\help.txt"
+            $helpExit = $LASTEXITCODE
+            & $exe --checkcuda *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\report\checkcuda.txt"
+            $cudaExit = $LASTEXITCODE
+            & $exe --version *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\report\version.txt"
+            $versionExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          "help_exit=$helpExit`ncheckcuda_exit=$cudaExit`nversion_exit=$versionExit" | Set-Content report\smoke-status.txt
+          if ($helpExit -ne 0) { throw "Reconstructed --help failed with exit code $helpExit" }
+
+      - name: Upload reconstruction report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-reconstruction-poc
+          path: report
+          if-no-files-found: error
+          retention-days: 3
