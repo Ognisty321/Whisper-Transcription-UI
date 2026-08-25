@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import marshal
 import os
+import sqlite3
 import ssl
 import sys
 import types
@@ -64,6 +65,9 @@ def _runtime_info(patch_metadata: dict[str, object]) -> dict[str, object]:
         "release": "Faster-Whisper-XXL r245.4 comprehensive modernization",
         "python": sys.version,
         "openssl": ssl.OPENSSL_VERSION,
+        "sqlite": sqlite3.sqlite_version,
+        "ssl_module": getattr(ssl._ssl, "__file__", None),
+        "sqlite_module": getattr(sqlite3, "__file__", None),
         "patches": patch_metadata,
         "versions": {
             "torch": torch.__version__,
