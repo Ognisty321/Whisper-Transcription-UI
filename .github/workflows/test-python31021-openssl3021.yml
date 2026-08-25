@@ -1,0 +1,130 @@
+name: Test CPython 3.10.21 with OpenSSL 3.0.21
+
+on:
+  push:
+    branches:
+      - automation/python31021-openssl3021-poc-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Check out tools
+        uses: actions/checkout@v4
+
+      - name: Set up bootstrap Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Build CPython 3.10.21 against OpenSSL 3.0.21
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path ossl-work, ossl-report | Out-Null
+          git clone --depth 1 --branch v3.10.21 https://github.com/python/cpython.git ossl-work\cpython
+          if ($LASTEXITCODE -ne 0) { throw "CPython clone failed: $LASTEXITCODE" }
+          git clone --depth 1 --branch openssl-bin-3.0 https://github.com/python/cpython-bin-deps.git ossl-work\cpython\externals\openssl-bin-3.0
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL bin-deps clone failed: $LASTEXITCODE" }
+
+          $pythonProps = 'ossl-work\cpython\PCbuild\python.props'
+          $props = Get-Content $pythonProps -Raw
+          $props = $props.Replace('openssl-bin-1.1.1w\$(ArchName)\', 'openssl-bin-3.0\$(ArchName)\')
+          Set-Content $pythonProps $props -Encoding utf8
+
+          $opensslProps = 'ossl-work\cpython\PCbuild\openssl.props'
+          $sslProps = Get-Content $opensslProps -Raw
+          $sslProps = $sslProps.Replace('<_DLLSuffix>-1_1</_DLLSuffix>', '<_DLLSuffix>-3</_DLLSuffix>')
+          Set-Content $opensslProps $sslProps -Encoding utf8
+
+          Select-String -Path $pythonProps -Pattern 'opensslOutDir|opensslIncludeDir' | Out-String | Set-Content ossl-report\patched-python-props.txt
+          Select-String -Path $opensslProps -Pattern '_DLLSuffix' | Out-String | Set-Content ossl-report\patched-openssl-props.txt
+
+          Push-Location ossl-work\cpython
+          try {
+            & .\PCbuild\build.bat -p x64 -c Release *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\cpython-build.txt"
+            $exit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($exit -ne 0) { throw "CPython build failed: $exit" }
+
+      - name: Verify built TLS and standard-library runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Resolve-Path 'ossl-work\cpython\PCbuild\amd64\python.exe').Path
+          & $py - <<'PY' | Set-Content ossl-report\runtime.json
+          import hashlib, json, ssl, sqlite3, sys, urllib.request, zlib
+          result = {
+              'python': sys.version,
+              'openssl': ssl.OPENSSL_VERSION,
+              'sqlite': sqlite3.sqlite_version,
+              'zlib': zlib.ZLIB_VERSION,
+              'ssl_module': ssl._ssl.__file__,
+          }
+          with urllib.request.urlopen('https://pypi.org/pypi/pip/json', timeout=30) as response:
+              body = response.read(4096)
+              result['https_status'] = response.status
+              result['https_prefix_sha256'] = hashlib.sha256(body).hexdigest()
+          print(json.dumps(result, indent=2))
+          PY
+          if ($LASTEXITCODE -ne 0) { throw "Runtime/TLS verification failed: $LASTEXITCODE" }
+          $runtime = Get-Content ossl-report\runtime.json -Raw | ConvertFrom-Json
+          if (-not $runtime.openssl.StartsWith('OpenSSL 3.0.21')) { throw "Unexpected OpenSSL: $($runtime.openssl)" }
+          if ($runtime.https_status -ne 200) { throw "HTTPS request failed: $($runtime.https_status)" }
+          Get-ChildItem ossl-work\cpython\PCbuild\amd64 -File | Where-Object { $_.Name -match '^(python310|python3|_ssl|_hashlib|libssl|libcrypto|sqlite3)' } | Select-Object Name,Length,@{n='FileVersion';e={$_.VersionInfo.FileVersion}},@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} | Export-Csv ossl-report\runtime-files.csv -NoTypeInformation -Encoding utf8
+
+      - name: Build a PyInstaller proof executable with the new runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Resolve-Path 'ossl-work\cpython\PCbuild\amd64\python.exe').Path
+          Push-Location ossl-work\cpython
+          try {
+            & $py -m ensurepip --upgrade *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\ensurepip.txt"
+            if ($LASTEXITCODE -ne 0) { throw "ensurepip failed: $LASTEXITCODE" }
+            & $py -m pip install --disable-pip-version-check --no-input pyinstaller==6.22.1 *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\pip-pyinstaller.txt"
+            if ($LASTEXITCODE -ne 0) { throw "PyInstaller install failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+          @'
+import json, ssl, sys, urllib.request
+print(json.dumps({'python': sys.version, 'openssl': ssl.OPENSSL_VERSION}))
+with urllib.request.urlopen('https://pypi.org/pypi/pip/json', timeout=30) as response:
+    print('https_status=' + str(response.status))
+'@ | Set-Content ossl-work\tls_probe.py -Encoding utf8
+
+          Push-Location ossl-work\cpython
+          try {
+            & $py -m PyInstaller --noconfirm --clean --onedir --console `
+              --name tls-probe `
+              --distpath "$env:GITHUB_WORKSPACE\ossl-work\dist" `
+              --workpath "$env:GITHUB_WORKSPACE\ossl-work\build" `
+              --specpath "$env:GITHUB_WORKSPACE\ossl-work\spec" `
+              "$env:GITHUB_WORKSPACE\ossl-work\tls_probe.py" *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\ossl-report\pyinstaller-build.txt"
+            $exit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($exit -ne 0) { throw "PyInstaller proof build failed: $exit" }
+          & ossl-work\dist\tls-probe\tls-probe.exe *>&1 | Tee-Object -FilePath ossl-report\frozen-tls-probe.txt
+          if ($LASTEXITCODE -ne 0) { throw "Frozen TLS probe failed: $LASTEXITCODE" }
+          $probe = Get-Content ossl-report\frozen-tls-probe.txt -Raw
+          if ($probe -notmatch 'OpenSSL 3\.0\.21' -or $probe -notmatch 'https_status=200') { throw 'Frozen probe did not confirm OpenSSL 3.0.21 and HTTPS' }
+
+      - name: Upload OpenSSL 3 proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpython31021-openssl3021-proof
+          path: ossl-report
+          if-no-files-found: error
+          retention-days: 14
