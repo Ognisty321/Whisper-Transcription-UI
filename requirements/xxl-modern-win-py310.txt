@@ -22,6 +22,17 @@ librosa==0.11.0
 soundfile==0.14.0
 soxr==1.1.0
 
+# Custom XXL VAD, MDX and RoFormer dependencies that are not pulled by
+# upstream Faster-Whisper itself.
+auditok==0.5.2
+rotary-embedding-torch==0.9.1
+beartype==0.22.9
+ml-collections==1.1.0
+webrtcvad-wheels==2.0.14
+pydub==0.25.1
+PyAudio==0.2.14
+pyreadline3==3.5.4
+
 # Latest pyannote line that retains the 3.x API imported by XXL.
 pyannote.audio==3.4.0
 lightning==2.6.5
@@ -30,6 +41,7 @@ torchmetrics==1.9.0
 lightning-utilities==0.15.3
 omegaconf==2.3.1
 antlr4-python3-runtime==4.9.3
+docopt==0.6.2
 optuna==4.9.0
 sqlalchemy==2.0.52
 
