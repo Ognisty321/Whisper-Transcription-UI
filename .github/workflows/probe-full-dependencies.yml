@@ -1,9 +1,6 @@
 name: Probe full frozen dependency set
 
 on:
-  push:
-    branches:
-      - automation/full-modernization-20260825
   workflow_dispatch:
 
 permissions:
