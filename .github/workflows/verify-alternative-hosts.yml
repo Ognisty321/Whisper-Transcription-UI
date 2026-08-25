@@ -1,0 +1,101 @@
+name: Verify alternative large-file hosts
+
+on:
+  push:
+    branches:
+      - automation/fileditch-get-verify-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Create test archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p report
+          printf 'Faster-Whisper hosting verification %s\n' "$(date -u +%FT%TZ)" > report/payload.txt
+          (cd report && zip host-test.zip payload.txt)
+          sha256sum report/host-test.zip > report/host-test.zip.sha256
+
+      - name: Test Buzzheavier anonymous upload and GET
+        id: buzz
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="faster-whisper-host-test-${GITHUB_RUN_ID}.zip"
+          curl --fail-with-body --location --retry 3 --retry-all-errors \
+            --upload-file report/host-test.zip \
+            --output report/buzz-response.json \
+            "https://w.buzzheavier.com/${name}"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('report/buzz-response.json').read_text())
+          ident=((data.get('data') or {}).get('id'))
+          if not ident:
+              raise SystemExit(f'Buzzheavier response has no data.id: {data!r}')
+          url=f'https://buzzheavier.com/{ident}'
+          Path('report/buzz-url.txt').write_text(url+'\n')
+          print(url)
+          PY
+          url="$(cat report/buzz-url.txt)"
+          curl --fail --location --retry 3 --retry-all-errors --max-time 60 \
+            --dump-header report/buzz-headers.txt --output report/buzz-page.html "$url"
+          grep -qi 'host-test\|BUZZHEAVIER\|Download' report/buzz-page.html
+
+      - name: Test Gofile guest upload and GET
+        id: gofile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --location --retry 3 --retry-all-errors \
+            --form 'file=@report/host-test.zip' \
+            --output report/gofile-response.json \
+            'https://upload.gofile.io/uploadfile'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('report/gofile-response.json').read_text())
+          if data.get('status') != 'ok':
+              raise SystemExit(f'Gofile status is not ok: {data!r}')
+          payload=data.get('data') or {}
+          url=payload.get('downloadPage') or payload.get('downloadPageUrl')
+          if not url:
+              raise SystemExit(f'Gofile response has no download page: {data!r}')
+          Path('report/gofile-url.txt').write_text(url+'\n')
+          print(url)
+          PY
+          url="$(cat report/gofile-url.txt)"
+          curl --fail --location --retry 3 --retry-all-errors --max-time 60 \
+            --dump-header report/gofile-headers.txt --output report/gofile-page.html "$url"
+          test -s report/gofile-page.html
+
+      - name: Select working host
+        shell: bash
+        env:
+          BUZZ_OUTCOME: ${{ steps.buzz.outcome }}
+          GOFILE_OUTCOME: ${{ steps.gofile.outcome }}
+        run: |
+          set -euo pipefail
+          printf 'buzz=%s\ngofile=%s\n' "$BUZZ_OUTCOME" "$GOFILE_OUTCOME" | tee report/outcomes.txt
+          if [[ "$BUZZ_OUTCOME" != success && "$GOFILE_OUTCOME" != success ]]; then
+            echo 'No alternative host passed upload plus GET verification.' >&2
+            exit 1
+          fi
+
+      - name: Upload host verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alternative-host-verification
+          path: report
+          if-no-files-found: error
+          retention-days: 7
