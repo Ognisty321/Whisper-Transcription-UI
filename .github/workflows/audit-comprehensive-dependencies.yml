@@ -1,0 +1,134 @@
+name: Audit comprehensive XXL dependencies
+
+on:
+  push:
+    branches:
+      - automation/comprehensive-modernization-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Check out audit tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python 3.10.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Download and extract verified original release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path audit-work, audit-report | Out-Null
+          $url = 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-all-errors --retry-delay 5 --output audit-work\original.7z $url
+          if ($LASTEXITCODE -ne 0) { throw "Original download failed: $LASTEXITCODE" }
+          $size = (Get-Item audit-work\original.7z).Length
+          $hash = (Get-FileHash audit-work\original.7z -Algorithm SHA256).Hash
+          "size=$size`nsha256=$hash" | Set-Content audit-report\original-archive.txt
+          if ($size -ne 1424256246) { throw "Unexpected original size: $size" }
+          if ($hash -ne '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844') { throw "Unexpected original SHA256: $hash" }
+          7z.exe x audit-work\original.7z -oaudit-work\extracted -y | Tee-Object -FilePath audit-report\7z-extract.txt
+          if ($LASTEXITCODE -ne 0) { throw "Extraction failed: $LASTEXITCODE" }
+          Remove-Item audit-work\original.7z -Force
+          $root = (Resolve-Path 'audit-work\extracted\Faster-Whisper-XXL').Path
+          "bundle_root=$root" | Set-Content audit-report\bundle-root.txt
+
+      - name: Externalize original PyInstaller module archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0 packaging
+          $root = (Get-Content audit-report\bundle-root.txt) -replace '^bundle_root=', ''
+          $contents = Join-Path $root '_xxl_data'
+          python tools\externalize_pyz.py (Join-Path $root 'faster-whisper-xxl.exe') $contents `
+            --scripts-dir (Join-Path $contents 'xxl_original_scripts') `
+            --manifest (Join-Path $contents 'xxl_externalization_manifest.json') `
+            *>&1 | Tee-Object -FilePath audit-report\externalize.txt
+          if ($LASTEXITCODE -ne 0) { throw "PYZ externalization failed: $LASTEXITCODE" }
+
+      - name: Probe embedded dependency versions and current compatible releases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content audit-report\bundle-root.txt) -replace '^bundle_root=', ''
+          python tools\audit_xxl_dependencies.py (Join-Path $root '_xxl_data') --output-dir audit-report *>&1 | Tee-Object -FilePath audit-report\audit-console.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency audit failed: $LASTEXITCODE" }
+
+      - name: Probe official PyTorch Windows CUDA indexes
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $indexes = @('cu128','cu129','cu130')
+          foreach ($index in $indexes) {
+            "===== $index =====" | Add-Content audit-report\pytorch-indexes.txt
+            python -m pip index versions torch --index-url "https://download.pytorch.org/whl/$index" *>&1 | Out-String -Width 4096 | Add-Content audit-report\pytorch-indexes.txt
+            python -m pip index versions torchvision --index-url "https://download.pytorch.org/whl/$index" *>&1 | Out-String -Width 4096 | Add-Content audit-report\pytorch-indexes.txt
+            python -m pip index versions torchaudio --index-url "https://download.pytorch.org/whl/$index" *>&1 | Out-String -Width 4096 | Add-Content audit-report\pytorch-indexes.txt
+          }
+
+      - name: Inventory external tools, codecs, and native runtimes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = (Get-Content audit-report\bundle-root.txt) -replace '^bundle_root=', ''
+          Get-ChildItem $root -Recurse -File -Include *.exe,*.dll,*.pyd | ForEach-Object {
+            [PSCustomObject]@{
+              RelativePath = $_.FullName.Substring($root.Length).TrimStart('\')
+              Size = $_.Length
+              ProductName = $_.VersionInfo.ProductName
+              ProductVersion = $_.VersionInfo.ProductVersion
+              FileVersion = $_.VersionInfo.FileVersion
+              CompanyName = $_.VersionInfo.CompanyName
+            }
+          } | Sort-Object RelativePath | Export-Csv audit-report\native-inventory.csv -NoTypeInformation -Encoding utf8
+
+          $commands = @(
+            @{Name='ffmpeg'; Path=(Join-Path $root 'ffmpeg.exe'); Args=@('-version')},
+            @{Name='ffprobe'; Path=(Join-Path $root 'ffprobe.exe'); Args=@('-version')},
+            @{Name='yt-dlp'; Path=(Join-Path $root 'yt-dlp.exe'); Args=@('--version')}
+          )
+          foreach ($command in $commands) {
+            "===== $($command.Name) =====" | Add-Content audit-report\external-tool-versions.txt
+            if (Test-Path $command.Path) {
+              & $command.Path @($command.Args) *>&1 | Out-String -Width 4096 | Add-Content audit-report\external-tool-versions.txt
+              "exit=$LASTEXITCODE" | Add-Content audit-report\external-tool-versions.txt
+            } else {
+              'not present at bundle root' | Add-Content audit-report\external-tool-versions.txt
+            }
+          }
+
+          Get-ChildItem (Join-Path $root '_xxl_data') -Directory | Select-Object Name | Sort-Object Name | Format-Table -HideTableHeaders | Out-String -Width 4096 | Set-Content audit-report\top-level-directories.txt
+          Get-ChildItem (Join-Path $root '_xxl_data') -File | Select-Object Name,Length,@{n='ProductVersion';e={$_.VersionInfo.ProductVersion}},@{n='FileVersion';e={$_.VersionInfo.FileVersion}} | Sort-Object Name | Export-Csv audit-report\top-level-files.csv -NoTypeInformation -Encoding utf8
+
+      - name: Record Python and TLS runtime details
+        shell: pwsh
+        run: |
+          python - <<'PY' | Set-Content audit-report\builder-python-runtime.json
+          import json, platform, ssl, sqlite3, sys, zlib
+          print(json.dumps({
+              'python': sys.version,
+              'implementation': platform.python_implementation(),
+              'openssl': ssl.OPENSSL_VERSION,
+              'sqlite': sqlite3.sqlite_version,
+              'zlib': zlib.ZLIB_VERSION,
+          }, indent=2))
+          PY
+          $root = (Get-Content audit-report\bundle-root.txt) -replace '^bundle_root=', ''
+          Get-ChildItem (Join-Path $root '_xxl_data') -File | Where-Object Name -Match '^(libssl|libcrypto|python3|python310|sqlite3|vcruntime|msvcp)' | Select-Object Name,Length,@{n='ProductVersion';e={$_.VersionInfo.ProductVersion}},@{n='FileVersion';e={$_.VersionInfo.FileVersion}},@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} | Export-Csv audit-report\embedded-python-native.csv -NoTypeInformation -Encoding utf8
+
+      - name: Upload comprehensive audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-comprehensive-dependency-audit
+          path: audit-report
+          if-no-files-found: error
+          retention-days: 14
