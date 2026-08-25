@@ -1,0 +1,75 @@
+name: Analyze XXL main bytecode
+
+on:
+  push:
+    branches:
+      - automation/xxl-main-analysis-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out analysis tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Download and extract verified original release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p analysis-work analysis-report
+          url='https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl -L --fail --retry 5 --retry-all-errors --retry-delay 5 -o analysis-work/original.7z "$url"
+          test "$(stat -c%s analysis-work/original.7z)" = '1424256246'
+          echo '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844  analysis-work/original.7z' | sha256sum -c -
+          7z x analysis-work/original.7z -oanalysis-work/extracted -y > analysis-report/7z-extract.txt
+          rm analysis-work/original.7z
+
+      - name: Externalize original PYZ and analyze main code objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0
+          root="$PWD/analysis-work/extracted/Faster-Whisper-XXL"
+          contents="$root/_xxl_data"
+          python tools/externalize_pyz.py "$root/faster-whisper-xxl.exe" "$contents" \
+            --scripts-dir "$contents/xxl_original_scripts" \
+            --manifest "$contents/xxl_externalization_manifest.json" \
+            | tee analysis-report/externalize.txt
+          python tools/disassemble_xxl_main.py "$contents/xxl_original_scripts/__main__.marshal" \
+            --output-dir analysis-report | tee analysis-report/disassemble-summary.txt
+
+      - name: Build pycdc and attempt decompilation
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          git clone --depth 1 https://github.com/zrax/pycdc.git analysis-work/pycdc
+          cmake -S analysis-work/pycdc -B analysis-work/pycdc-build -DCMAKE_BUILD_TYPE=Release > analysis-report/pycdc-cmake.txt 2>&1
+          cmake --build analysis-work/pycdc-build --parallel 2 > analysis-report/pycdc-build.txt 2>&1
+          pycdc_bin="$(find analysis-work/pycdc-build -type f -name pycdc -perm -111 | head -n1)"
+          if [ -n "$pycdc_bin" ]; then
+            "$pycdc_bin" analysis-report/xxl-main.pyc > analysis-report/xxl-main-decompiled.py 2> analysis-report/pycdc-errors.txt
+            echo "pycdc_exit=$?" > analysis-report/pycdc-status.txt
+          else
+            echo 'pycdc binary not found' > analysis-report/pycdc-status.txt
+          fi
+          exit 0
+
+      - name: Upload bytecode analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-main-bytecode-analysis
+          path: analysis-report
+          if-no-files-found: error
+          retention-days: 14
