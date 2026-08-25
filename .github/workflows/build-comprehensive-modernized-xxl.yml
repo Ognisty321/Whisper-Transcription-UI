@@ -22,6 +22,8 @@ jobs:
       HF_HUB_ENABLE_HF_TRANSFER: '0'
       TOKENIZERS_PARALLELISM: 'false'
       PYTHONNOUSERSITE: '1'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
       ARCHIVE_NAME: Faster-Whisper-XXL_r245.4_COMPREHENSIVE_RTX50_CUDA128_2026-08-25.zip
     steps:
       - name: Check out modernization tools
