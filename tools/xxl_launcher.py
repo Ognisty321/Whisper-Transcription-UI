@@ -23,9 +23,6 @@ def _configure_dll_search(contents: Path) -> None:
     if existing:
         os.environ["PATH"] = os.pathsep.join(existing + [os.environ.get("PATH", "")])
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        # Keep handles alive for the lifetime of the process. This makes the
-        # CUDA 12.8 libraries bundled with PyTorch visible to CTranslate2 and
-        # ONNX Runtime before any of those packages is imported.
         globals()["_XXL_DLL_DIRECTORY_HANDLES"] = [os.add_dll_directory(path) for path in existing]
 
 
@@ -35,6 +32,46 @@ def _load_code(path: Path) -> types.CodeType:
     if not isinstance(code, types.CodeType):
         raise TypeError(f"{path} does not contain a Python code object")
     return code
+
+
+def _runtime_info(contents: Path) -> None:
+    import importlib.util
+    import sqlite3
+    import ssl
+    import zlib
+
+    info = {
+        "python": sys.version,
+        "python_magic": importlib.util.MAGIC_NUMBER.hex(),
+        "openssl": ssl.OPENSSL_VERSION,
+        "sqlite": sqlite3.sqlite_version,
+        "zlib": zlib.ZLIB_VERSION,
+        "executable": sys.executable,
+        "contents": str(contents),
+    }
+    try:
+        import torch
+        info["torch"] = torch.__version__
+        info["torch_cuda"] = torch.version.cuda
+        try:
+            info["torch_arch_flags"] = torch._C._cuda_getArchFlags()
+        except Exception as exc:
+            info["torch_arch_flags"] = f"unavailable: {exc}"
+        info["cudnn"] = torch.backends.cudnn.version()
+    except Exception as exc:
+        info["torch_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        import ctranslate2
+        info["ctranslate2"] = ctranslate2.__version__
+    except Exception as exc:
+        info["ctranslate2_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        import onnxruntime
+        info["onnxruntime"] = onnxruntime.__version__
+        info["onnxruntime_providers"] = onnxruntime.get_available_providers()
+    except Exception as exc:
+        info["onnxruntime_error"] = f"{type(exc).__name__}: {exc}"
+    print(json.dumps(info, ensure_ascii=False, indent=2))
 
 
 def _main() -> None:
@@ -51,21 +88,26 @@ def _main() -> None:
 
     _configure_dll_search(contents)
 
-    # PyInstaller already places its contents directory on sys.path. Put it first
-    # explicitly so the externalized original modules and replaced wheels take
-    # precedence over global/user installations.
     contents_text = str(contents)
     sys.path[:] = [item for item in sys.path if os.path.abspath(item or os.curdir) != os.path.abspath(contents_text)]
     sys.path.insert(0, contents_text)
 
-    # The original PyInstaller 6.12 pkg_resources runtime hook emits a noisy
-    # deprecation warning with newer package metadata. It is not an application
-    # error and should not pollute normal CLI output.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"pkg_resources is deprecated as an API.*",
+        category=UserWarning,
+    )
     warnings.filterwarnings(
         "ignore",
         message=r"pkg_resources is deprecated as an API.*",
         category=DeprecationWarning,
     )
+
+    # Reconstruction-only diagnostic. It runs before the original XXL parser,
+    # so it does not alter any upstream/custom command-line options.
+    if len(sys.argv) == 2 and sys.argv[1] == "--xxl-runtime-info":
+        _runtime_info(contents)
+        return
 
     namespace = globals()
     namespace["__name__"] = "__main__"
