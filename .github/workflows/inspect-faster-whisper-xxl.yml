@@ -1,0 +1,129 @@
+name: Inspect Faster-Whisper-XXL r245.4
+
+on:
+  push:
+    branches:
+      - automation/faster-whisper-xxl-rtx50-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Download original release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path work, report | Out-Null
+          $url = 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-delay 5 --output work\original.7z $url
+          $size = (Get-Item work\original.7z).Length
+          "archive_size=$size" | Tee-Object -FilePath report\download.txt
+          if ($size -ne 1424256246) { throw "Unexpected archive size: $size" }
+          (Get-FileHash work\original.7z -Algorithm SHA256).Hash | Tee-Object -FilePath report\archive.sha256
+
+      - name: Extract release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          7z x work\original.7z -owork\extracted -y | Tee-Object -FilePath report\7z-extract.txt
+          Get-ChildItem work\extracted -Force | Format-Table Name,Mode,Length -AutoSize | Out-String -Width 4096 | Set-Content report\root-listing.txt
+
+      - name: Install inspection tools
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0 pefile
+
+      - name: Inventory bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-ChildItem work\extracted -Directory | Select-Object -First 1).FullName
+          if (-not $root) { $root = (Resolve-Path work\extracted).Path }
+          "bundle_root=$root" | Set-Content report\bundle-root.txt
+
+          Get-ChildItem $root -Recurse -File | ForEach-Object {
+            [PSCustomObject]@{
+              RelativePath = $_.FullName.Substring($root.Length).TrimStart('\')
+              Size = $_.Length
+              Extension = $_.Extension
+              ProductVersion = $_.VersionInfo.ProductVersion
+              FileVersion = $_.VersionInfo.FileVersion
+            }
+          } | Sort-Object RelativePath | Export-Csv report\files.csv -NoTypeInformation -Encoding utf8
+
+          Get-ChildItem $root -Recurse -File | Sort-Object Length -Descending | Select-Object -First 200 @{n='RelativePath';e={$_.FullName.Substring($root.Length).TrimStart('\')}},Length | Format-Table -AutoSize | Out-String -Width 4096 | Set-Content report\largest-files.txt
+
+          Get-ChildItem $root -Recurse -File -Include *.dll,*.pyd,*.exe | ForEach-Object {
+            [PSCustomObject]@{
+              RelativePath = $_.FullName.Substring($root.Length).TrimStart('\')
+              Size = $_.Length
+              ProductName = $_.VersionInfo.ProductName
+              ProductVersion = $_.VersionInfo.ProductVersion
+              FileVersion = $_.VersionInfo.FileVersion
+              CompanyName = $_.VersionInfo.CompanyName
+              SHA256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            }
+          } | Sort-Object RelativePath | Export-Csv report\pe-files.csv -NoTypeInformation -Encoding utf8
+
+          Get-ChildItem $root -Recurse -File -Filter METADATA | ForEach-Object {
+            $name = Select-String -Path $_.FullName -Pattern '^Name:\s*(.+)$' | Select-Object -First 1
+            $version = Select-String -Path $_.FullName -Pattern '^Version:\s*(.+)$' | Select-Object -First 1
+            if ($name -or $version) {
+              [PSCustomObject]@{
+                RelativePath = $_.FullName.Substring($root.Length).TrimStart('\')
+                Name = if ($name) {$name.Matches[0].Groups[1].Value} else {''}
+                Version = if ($version) {$version.Matches[0].Groups[1].Value} else {''}
+              }
+            }
+          } | Sort-Object Name | Export-Csv report\metadata-versions.csv -NoTypeInformation -Encoding utf8
+
+          Get-ChildItem $root -Recurse -File | Where-Object {
+            $_.Name -match '^(cublas|cudnn|cudart|nvrtc|ctranslate2|torch|onnxruntime|python|av|tokenizers|faster)' -or
+            $_.FullName -match 'ctranslate2|faster_whisper|torch|onnxruntime|nvidia'
+          } | Select-Object @{n='RelativePath';e={$_.FullName.Substring($root.Length).TrimStart('\')}},Length,@{n='ProductVersion';e={$_.VersionInfo.ProductVersion}},@{n='FileVersion';e={$_.VersionInfo.FileVersion}} | Sort-Object RelativePath | Format-Table -AutoSize | Out-String -Width 8192 | Set-Content report\gpu-and-core-files.txt
+
+          $exe = Get-ChildItem $root -Recurse -File -Filter faster-whisper-xxl.exe | Select-Object -First 1
+          if (-not $exe) { throw 'faster-whisper-xxl.exe not found' }
+          "exe=$($exe.FullName)" | Set-Content report\exe-path.txt
+          & pyi-archive_viewer.exe --list $exe.FullName *>&1 | Out-String -Width 4096 | Set-Content report\pyinstaller-archive.txt
+
+      - name: Run safe smoke tests
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $root = (Get-Content report\bundle-root.txt) -replace '^bundle_root=', ''
+          $exe = Get-ChildItem $root -Recurse -File -Filter faster-whisper-xxl.exe | Select-Object -First 1
+          Push-Location $exe.DirectoryName
+          try {
+            & $exe.FullName --help *>&1 | Out-String -Width 4096 | Set-Content "$env:GITHUB_WORKSPACE\report\help.txt"
+            "help_exit=$LASTEXITCODE" | Set-Content "$env:GITHUB_WORKSPACE\report\smoke-status.txt"
+            & $exe.FullName --checkcuda *>&1 | Out-String -Width 4096 | Set-Content "$env:GITHUB_WORKSPACE\report\checkcuda.txt"
+            "checkcuda_exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\report\smoke-status.txt"
+          } finally {
+            Pop-Location
+          }
+
+      - name: Add report summary
+        shell: pwsh
+        run: |
+          "## Faster-Whisper-XXL r245.4 inspection" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "```text" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-Content report\download.txt, report\archive.sha256, report\bundle-root.txt | Add-Content $env:GITHUB_STEP_SUMMARY
+          "```" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "### Core GPU/runtime files" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "```text" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-Content report\gpu-and-core-files.txt | Select-Object -First 160 | Add-Content $env:GITHUB_STEP_SUMMARY
+          "```" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-r245.4-inspection
+          path: report
+          if-no-files-found: error
+          retention-days: 3
