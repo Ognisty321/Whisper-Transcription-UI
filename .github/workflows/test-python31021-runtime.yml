@@ -1,0 +1,171 @@
+name: Test CPython 3.10.21 security runtime
+
+on:
+  push:
+    branches:
+      - automation/python31021-runtime-poc-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+    steps:
+      - name: Check out reconstruction tools
+        uses: actions/checkout@v4
+
+      - name: Set up bootstrap Python 3.10.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Download and extract verified original bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path pysec-work, pysec-report | Out-Null
+          $url = 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z'
+          curl.exe -L --fail --retry 5 --retry-all-errors --retry-delay 5 --output pysec-work\original.7z $url
+          if ($LASTEXITCODE -ne 0) { throw "Original download failed: $LASTEXITCODE" }
+          if ((Get-Item pysec-work\original.7z).Length -ne 1424256246) { throw 'Unexpected original size' }
+          if ((Get-FileHash pysec-work\original.7z -Algorithm SHA256).Hash -ne '237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844') { throw 'Unexpected original SHA256' }
+          7z.exe x pysec-work\original.7z -opysec-work\extracted -y | Tee-Object -FilePath pysec-report\7z-extract.txt
+          if ($LASTEXITCODE -ne 0) { throw "Extraction failed: $LASTEXITCODE" }
+          Remove-Item pysec-work\original.7z -Force
+          (Resolve-Path 'pysec-work\extracted\Faster-Whisper-XXL').Path | Set-Content pysec-report\bundle-root.txt
+
+      - name: Externalize original Python 3.10 bytecode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0
+          $root = (Get-Content pysec-report\bundle-root.txt -Raw).Trim()
+          $contents = Join-Path $root '_xxl_data'
+          python tools\externalize_pyz.py (Join-Path $root 'faster-whisper-xxl.exe') $contents `
+            --scripts-dir (Join-Path $contents 'xxl_original_scripts') `
+            --manifest (Join-Path $contents 'xxl_externalization_manifest.json') `
+            *>&1 | Tee-Object -FilePath pysec-report\externalize.txt
+          if ($LASTEXITCODE -ne 0) { throw "Externalization failed: $LASTEXITCODE" }
+
+      - name: Build CPython 3.10.21 x64 from official source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 --branch v3.10.21 https://github.com/python/cpython.git pysec-work\cpython
+          if ($LASTEXITCODE -ne 0) { throw "CPython clone failed: $LASTEXITCODE" }
+          Push-Location pysec-work\cpython
+          try {
+            & .\PCbuild\build.bat -p x64 -c Release *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\pysec-report\cpython-build.txt"
+            $buildExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($buildExit -ne 0) { throw "CPython build failed: $buildExit" }
+          $py = (Resolve-Path 'pysec-work\cpython\PCbuild\amd64\python.exe').Path
+          & $py -c "import json, ssl, sqlite3, sys, zlib; print(json.dumps({'python':sys.version,'openssl':ssl.OPENSSL_VERSION,'sqlite':sqlite3.sqlite_version,'zlib':zlib.ZLIB_VERSION}, indent=2))" | Set-Content pysec-report\python31021-runtime.json
+          if ($LASTEXITCODE -ne 0) { throw "Built Python runtime probe failed: $LASTEXITCODE" }
+
+      - name: Install latest PyInstaller into built CPython
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $py = (Resolve-Path 'pysec-work\cpython\PCbuild\amd64\python.exe').Path
+          Push-Location pysec-work\cpython
+          try {
+            & $py -m ensurepip --upgrade *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\pysec-report\ensurepip.txt"
+            if ($LASTEXITCODE -ne 0) { throw "ensurepip failed: $LASTEXITCODE" }
+            & $py -m pip install --disable-pip-version-check --no-input pyinstaller==6.22.1 *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\pysec-report\pip-pyinstaller.txt"
+            if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed: $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Build launcher with CPython 3.10.21 and overlay updated standard library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content pysec-report\bundle-root.txt -Raw).Trim()
+          $contents = Join-Path $root '_xxl_data'
+          $py = (Resolve-Path 'pysec-work\cpython\PCbuild\amd64\python.exe').Path
+          Push-Location pysec-work\cpython
+          try {
+            & $py -m PyInstaller --noconfirm --clean --onedir --console `
+              --name faster-whisper-xxl `
+              --contents-directory _xxl_data `
+              --distpath "$env:GITHUB_WORKSPACE\pysec-work\launcher-dist" `
+              --workpath "$env:GITHUB_WORKSPACE\pysec-work\launcher-build" `
+              --specpath "$env:GITHUB_WORKSPACE\pysec-work\launcher-spec" `
+              "$env:GITHUB_WORKSPACE\tools\xxl_launcher.py" *>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\pysec-report\pyinstaller-build.txt"
+            $buildExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($buildExit -ne 0) { throw "Launcher build failed: $buildExit" }
+
+          $launcher = (Resolve-Path 'pysec-work\launcher-dist\faster-whisper-xxl').Path
+          Copy-Item (Join-Path $launcher 'faster-whisper-xxl.exe') (Join-Path $root 'faster-whisper-xxl.exe') -Force
+          Copy-Item (Join-Path $launcher '_xxl_data\*') $contents -Recurse -Force
+
+          # Replace the old pure-Python standard library with 3.10.21 sources.
+          $lib = (Resolve-Path 'pysec-work\cpython\Lib').Path
+          $exclude = @('site-packages','test','ensurepip','idlelib','__pycache__')
+          Get-ChildItem $lib -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
+            Copy-Item $_.FullName $contents -Recurse -Force
+          }
+
+          # Replace CPython native runtime and standard-library extension modules.
+          $amd64 = (Resolve-Path 'pysec-work\cpython\PCbuild\amd64').Path
+          Get-ChildItem $amd64 -File -Include *.pyd,*.dll | Copy-Item -Destination $contents -Force
+          Remove-Item (Join-Path $contents 'libssl-1_1.dll') -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $contents 'libcrypto-1_1.dll') -Force -ErrorAction SilentlyContinue
+
+          Get-ChildItem $contents -File | Where-Object { $_.Name -match '^(python|libssl|libcrypto|sqlite3|libffi|_ssl|_hashlib)' } | Select-Object Name,Length,@{n='FileVersion';e={$_.VersionInfo.FileVersion}},@{n='SHA256';e={(Get-FileHash $_.FullName -Algorithm SHA256).Hash}} | Export-Csv pysec-report\packaged-python-runtime.csv -NoTypeInformation -Encoding utf8
+
+      - name: Smoke-test CPython 3.10.21 reconstructed application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = (Get-Content pysec-report\bundle-root.txt -Raw).Trim()
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          Push-Location $root
+          try {
+            & $exe --help *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\pysec-report\help.txt"
+            $help = $LASTEXITCODE
+            & $exe --version *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\pysec-report\version.txt"
+            $version = $LASTEXITCODE
+            & $exe --checkcuda *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\pysec-report\checkcuda.txt"
+            $cuda = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          "help_exit=$help`nversion_exit=$version`ncheckcuda_exit=$cuda" | Set-Content pysec-report\cli-status.txt
+          if ($help -ne 0 -or $version -ne 0 -or $cuda -ne 0) { throw 'CLI smoke test failed' }
+
+      - name: Run end-to-end CPU transcription under CPython 3.10.21
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path pysec-report\inference, pysec-work\models | Out-Null
+          $wav = (Resolve-Path pysec-report).Path + '\\decoder-test.wav'
+          python tools\generate_test_wav.py $wav
+          $root = (Get-Content pysec-report\bundle-root.txt -Raw).Trim()
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          & $exe $wav --model tiny.en --model_dir (Resolve-Path pysec-work\models).Path --device cpu --compute_type int8 --output_dir (Resolve-Path pysec-report\inference).Path --output_format txt --verbose false *>&1 | Tee-Object -FilePath pysec-report\inference-log.txt
+          if ($LASTEXITCODE -ne 0) { throw "CPU inference failed: $LASTEXITCODE" }
+          $out = Join-Path (Resolve-Path pysec-report\inference).Path 'decoder-test.txt'
+          if (-not (Test-Path $out) -or (Get-Item $out).Length -eq 0) { throw 'Inference output missing or empty' }
+
+      - name: Upload CPython 3.10.21 proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-python31021-runtime-poc
+          path: pysec-report
+          if-no-files-found: error
+          retention-days: 14
