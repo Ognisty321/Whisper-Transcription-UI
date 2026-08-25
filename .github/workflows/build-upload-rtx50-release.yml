@@ -1,0 +1,275 @@
+name: Build and upload Faster-Whisper-XXL RTX 50 release
+
+on:
+  push:
+    branches:
+      - automation/faster-whisper-xxl-rtx50-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      ORIGINAL_URL: https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z
+      ORIGINAL_SIZE: '1424256246'
+      ORIGINAL_SHA256: 237DEE23939CDABFC96EF859FC5E584B842C3A5557E0D2CA744E1F87C14C5844
+      ARCHIVE_NAME: Faster-Whisper-XXL_r245.4_RTX50_CUDA128_2026-08-25.zip
+      HF_HUB_DISABLE_XET: '1'
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+    steps:
+      - name: Check out reconstruction tools
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.11'
+
+      - name: Download and extract verified original release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-work, release-report | Out-Null
+          curl.exe -L --fail --retry 5 --retry-all-errors --retry-delay 5 --output release-work\original.7z $env:ORIGINAL_URL
+          if ($LASTEXITCODE -ne 0) { throw "Original archive download failed: $LASTEXITCODE" }
+          $size = (Get-Item release-work\original.7z).Length
+          $hash = (Get-FileHash release-work\original.7z -Algorithm SHA256).Hash
+          "size=$size`nsha256=$hash" | Set-Content release-report\original-archive.txt
+          if ($size -ne [int64]$env:ORIGINAL_SIZE) { throw "Unexpected archive size: $size" }
+          if ($hash -ne $env:ORIGINAL_SHA256) { throw "Unexpected original SHA256: $hash" }
+          7z.exe x release-work\original.7z -orelease-work\extracted -y | Tee-Object -FilePath release-report\7z-extract.txt
+          if ($LASTEXITCODE -ne 0) { throw "Original archive extraction failed: $LASTEXITCODE" }
+          Remove-Item release-work\original.7z -Force
+          $root = (Get-ChildItem release-work\extracted -Directory | Where-Object Name -eq 'Faster-Whisper-XXL' | Select-Object -First 1).FullName
+          if (-not $root) { throw 'Faster-Whisper-XXL bundle root not found' }
+          "bundle_root=$root" | Set-Content release-report\bundle-root.txt
+
+      - name: Externalize original PyInstaller code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --disable-pip-version-check --no-input pyinstaller==6.12.0
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed: $LASTEXITCODE" }
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          $contents = Join-Path $root '_xxl_data'
+          python tools\externalize_pyz.py $exe $contents `
+            --scripts-dir (Join-Path $contents 'xxl_original_scripts') `
+            --manifest (Join-Path $contents 'xxl_externalization_manifest.json') `
+            *>&1 | Tee-Object -FilePath release-report\externalize.txt
+          if ($LASTEXITCODE -ne 0) { throw "PYZ externalization failed: $LASTEXITCODE" }
+          Copy-Item (Join-Path $contents 'xxl_externalization_manifest.json') release-report\xxl_externalization_manifest.json
+
+      - name: Install coherent CUDA 12.8 runtime stack
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-work\modern | Out-Null
+          python -m pip install --disable-pip-version-check --no-input --no-cache-dir --no-deps `
+            --target release-work\modern `
+            --index-url https://download.pytorch.org/whl/cu128 `
+            torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 `
+            *>&1 | Tee-Object -FilePath release-report\pip-pytorch.txt
+          if ($LASTEXITCODE -ne 0) { throw "PyTorch CUDA 12.8 stack installation failed: $LASTEXITCODE" }
+          python -m pip install --disable-pip-version-check --no-input --no-cache-dir --no-deps `
+            --target release-work\modern `
+            ctranslate2==4.8.1 onnxruntime-gpu==1.23.2 `
+            *>&1 | Tee-Object -FilePath release-report\pip-runtime.txt
+          if ($LASTEXITCODE -ne 0) { throw "CTranslate2/ONNX Runtime installation failed: $LASTEXITCODE" }
+
+          Get-ChildItem release-work\modern -Force | Select-Object Name,@{n='Size';e={if ($_.PSIsContainer) {(Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum} else {$_.Length}}} | Sort-Object Name | Export-Csv release-report\modern-stage.csv -NoTypeInformation -Encoding utf8
+
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          $contents = Join-Path $root '_xxl_data'
+          $replace = @('torch','torchgen','functorch','torchvision','torchaudio','ctranslate2','onnxruntime')
+          foreach ($name in $replace) {
+            $path = Join-Path $contents $name
+            if (Test-Path $path) { Remove-Item $path -Recurse -Force }
+          }
+          Get-ChildItem $contents -Directory | Where-Object {
+            $_.Name -match '^(torch|torchvision|torchaudio|ctranslate2|onnxruntime_gpu)-.*\.dist-info$'
+          } | Remove-Item -Recurse -Force
+          Copy-Item release-work\modern\* $contents -Recurse -Force
+
+      - name: Build and merge reconstructed launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          python -m PyInstaller --noconfirm --clean --onedir --console `
+            --name faster-whisper-xxl `
+            --contents-directory _xxl_data `
+            --distpath release-work\launcher-dist `
+            --workpath release-work\launcher-build `
+            --specpath release-work\launcher-spec `
+            tools\xxl_launcher.py *>&1 | Tee-Object -FilePath release-report\pyinstaller-build.txt
+          if ($LASTEXITCODE -ne 0) { throw "Launcher rebuild failed: $LASTEXITCODE" }
+          $launcherRoot = (Resolve-Path 'release-work\launcher-dist\faster-whisper-xxl').Path
+          Copy-Item (Join-Path $launcherRoot 'faster-whisper-xxl.exe') (Join-Path $root 'faster-whisper-xxl.exe') -Force
+          Copy-Item (Join-Path $launcherRoot '_xxl_data\*') (Join-Path $root '_xxl_data') -Recurse -Force
+          (Get-FileHash (Join-Path $root 'faster-whisper-xxl.exe') -Algorithm SHA256).Hash | Set-Content release-report\rebuilt-executable.sha256
+
+      - name: Verify exact versions, Blackwell architecture, providers, and DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          $contents = Join-Path $root '_xxl_data'
+          python tools\verify_modern_runtime.py $contents --output release-report\runtime-versions.json *>&1 | Tee-Object -FilePath release-report\runtime-verification.txt
+          if ($LASTEXITCODE -ne 0) { throw "Modern runtime verification failed: $LASTEXITCODE" }
+
+      - name: Smoke-test rebuilt CLI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          Push-Location $root
+          try {
+            & $exe --help *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\release-report\help.txt"
+            $helpExit = $LASTEXITCODE
+            & $exe --version *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\release-report\version.txt"
+            $versionExit = $LASTEXITCODE
+            & $exe --checkcuda *>&1 | Out-String -Width 8192 | Set-Content "$env:GITHUB_WORKSPACE\release-report\checkcuda.txt"
+            $cudaExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          "help_exit=$helpExit`nversion_exit=$versionExit`ncheckcuda_exit=$cudaExit" | Set-Content release-report\cli-smoke-status.txt
+          if ($helpExit -ne 0 -or $versionExit -ne 0 -or $cudaExit -ne 0) { throw 'One or more rebuilt CLI smoke tests failed' }
+
+      - name: Run end-to-end CPU transcription test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-report\inference, release-work\models | Out-Null
+          $wav = (Resolve-Path release-report).Path + '\\decoder-test.wav'
+          python tools\generate_test_wav.py $wav
+          if ($LASTEXITCODE -ne 0) { throw "WAV fixture generation failed: $LASTEXITCODE" }
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          $exe = Join-Path $root 'faster-whisper-xxl.exe'
+          & $exe $wav `
+            --model tiny.en `
+            --model_dir (Resolve-Path release-work\models).Path `
+            --device cpu `
+            --compute_type int8 `
+            --output_dir (Resolve-Path release-report\inference).Path `
+            --output_format txt `
+            --verbose false `
+            *>&1 | Tee-Object -FilePath release-report\inference-log.txt
+          $exitCode = $LASTEXITCODE
+          "inference_exit=$exitCode" | Set-Content release-report\inference-status.txt
+          if ($exitCode -ne 0) { throw "CPU inference failed with exit code $exitCode" }
+          $output = Join-Path (Resolve-Path release-report\inference).Path 'decoder-test.txt'
+          if (-not (Test-Path $output) -or (Get-Item $output).Length -eq 0) { throw 'CPU inference output is missing or empty' }
+          Get-ChildItem release-report\inference -Recurse -File | Select-Object Name,Length | Format-Table -AutoSize | Out-String | Set-Content release-report\inference-files.txt
+
+      - name: Add release notes, manifest, and internal checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Get-Content release-report\bundle-root.txt) -replace '^bundle_root=', ''
+          python tools\finalize_rtx50_release.py $root release-report\runtime-versions.json `
+            --report-dir release-report `
+            --original-url $env:ORIGINAL_URL `
+            --original-size $env:ORIGINAL_SIZE `
+            --original-sha256 $env:ORIGINAL_SHA256 `
+            --git-sha $env:GITHUB_SHA `
+            --inference-output release-report\inference\decoder-test.txt `
+            *>&1 | Tee-Object -FilePath release-report\finalize-release.txt
+          if ($LASTEXITCODE -ne 0) { throw "Release metadata finalization failed: $LASTEXITCODE" }
+
+          $files = Get-ChildItem $root -Recurse -File
+          $size = ($files | Measure-Object Length -Sum).Sum
+          "files=$($files.Count)`nuncompressed_bytes=$size" | Set-Content release-report\bundle-footprint.txt
+
+      - name: Build and test ZIP64 archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zipPath = Join-Path (Resolve-Path release-work).Path $env:ARCHIVE_NAME
+          Push-Location release-work\extracted
+          try {
+            7z.exe a -tzip -mx=5 -mmt=on $zipPath '.\Faster-Whisper-XXL' | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\release-report\7z-create.txt"
+            $createExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($createExit -ne 0) { throw "ZIP creation failed: $createExit" }
+          7z.exe t $zipPath | Tee-Object -FilePath release-report\7z-test.txt
+          if ($LASTEXITCODE -ne 0) { throw "ZIP integrity test failed: $LASTEXITCODE" }
+          $zip = Get-Item $zipPath
+          $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash
+          $zipPath | Set-Content release-report\archive-path.txt
+          $hash | Set-Content release-report\archive.sha256
+          "filename=$($zip.Name)`nsize_bytes=$($zip.Length)`nsha256=$hash" | Set-Content release-report\archive-info.txt
+
+      - name: Upload final ZIP to FileDitch and validate response
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zipPath = (Get-Content release-report\archive-path.txt -Raw).Trim()
+          $responsePath = (Join-Path (Resolve-Path release-report).Path 'fileditch-response.json')
+          $curlLog = (Join-Path (Resolve-Path release-report).Path 'fileditch-curl.txt')
+          $endpoint = "https://new.fileditch.com/upload.php?filename=$env:ARCHIVE_NAME"
+
+          $putArgs = @(
+            '--location', '--fail-with-body', '--retry', '4', '--retry-all-errors',
+            '--connect-timeout', '30', '--silent', '--show-error',
+            '--header', 'Content-Type: application/octet-stream',
+            '--upload-file', $zipPath,
+            '--output', $responsePath,
+            $endpoint
+          )
+          & curl.exe @putArgs 2>&1 | Tee-Object -FilePath $curlLog
+          $uploadExit = $LASTEXITCODE
+
+          if ($uploadExit -ne 0) {
+            "Raw upload with --upload-file exited $uploadExit; retrying explicit POST." | Add-Content $curlLog
+            Remove-Item $responsePath -Force -ErrorAction SilentlyContinue
+            $postArgs = @(
+              '--location', '--fail-with-body', '--retry', '4', '--retry-all-errors',
+              '--connect-timeout', '30', '--silent', '--show-error',
+              '--request', 'POST',
+              '--header', 'Content-Type: application/octet-stream',
+              '--data-binary', ("@" + $zipPath),
+              '--output', $responsePath,
+              $endpoint
+            )
+            & curl.exe @postArgs 2>&1 | Tee-Object -FilePath $curlLog -Append
+            $uploadExit = $LASTEXITCODE
+          }
+          if ($uploadExit -ne 0) { throw "FileDitch upload failed: $uploadExit" }
+
+          python tools\validate_fileditch_upload.py $responsePath $zipPath --output release-report\fileditch-validated.json *>&1 | Tee-Object -FilePath release-report\fileditch-validation.txt
+          if ($LASTEXITCODE -ne 0) { throw "FileDitch response validation failed: $LASTEXITCODE" }
+          $validated = Get-Content release-report\fileditch-validated.json -Raw | ConvertFrom-Json
+          $validated.url | Set-Content release-report\download-url.txt
+
+          & curl.exe --location --head --silent --show-error --max-time 60 $validated.url --output release-report\fileditch-head.txt
+          "head_exit=$LASTEXITCODE" | Set-Content release-report\fileditch-head-status.txt
+
+          '## Faster-Whisper-XXL RTX 50 release' | Add-Content $env:GITHUB_STEP_SUMMARY
+          "Direct URL: $($validated.url)" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "Size: $($validated.size_bytes) bytes" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "SHA256: $($validated.sha256)" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Record runner disk usage
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-report | Out-Null
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,2)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}} | Format-Table -AutoSize | Out-String | Set-Content release-report\disk.txt
+
+      - name: Upload release report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: faster-whisper-xxl-rtx50-release-report
+          path: release-report
+          if-no-files-found: error
+          retention-days: 30
