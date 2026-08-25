@@ -11,7 +11,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 _DLL_HANDLES: list[Any] = []
 
@@ -25,6 +25,7 @@ def _configure_environment(contents: Path) -> list[str]:
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(contents / "numba_cache"))
 
     # Put the coherent CUDA 12.8 runtime before all other bundle locations.
     candidates = [
@@ -64,6 +65,135 @@ def _configure_environment(contents: Path) -> list[str]:
     return existing
 
 
+def _install_torchaudio_compat() -> dict[str, Any]:
+    """Restore only the legacy TorchAudio I/O surface needed by Pyannote 3.x.
+
+    TorchAudio 2.9+ removed media I/O in favor of TorchCodec. The abandoned XXL
+    bundle contains Pyannote 3.x code that evaluates ``torchaudio.AudioMetaData``
+    during import and may call ``info/load/save/list_audio_backends``. These
+    wrappers use the already bundled SoundFile implementation and leave all
+    TorchAudio transforms/models untouched.
+    """
+
+    import re
+    import torchaudio
+
+    class AudioMetaData(NamedTuple):
+        sample_rate: int
+        num_frames: int
+        num_channels: int
+        bits_per_sample: int
+        encoding: str
+
+    def _metadata(uri: Any, *args: Any, **kwargs: Any) -> AudioMetaData:
+        import soundfile as sf
+        info = sf.info(uri)
+        subtype = str(getattr(info, "subtype", "") or "")
+        match = re.search(r"(\d+)", subtype)
+        bits = int(match.group(1)) if match else 0
+        if subtype.startswith("PCM_U"):
+            encoding = "PCM_U"
+        elif subtype.startswith("PCM_F") or subtype in {"FLOAT", "DOUBLE"}:
+            encoding = "PCM_F"
+        elif subtype.startswith("PCM"):
+            encoding = "PCM_S"
+        elif subtype in {"ULAW", "ALAW", "VORBIS", "OPUS"}:
+            encoding = subtype
+        else:
+            encoding = str(getattr(info, "format", "UNKNOWN") or "UNKNOWN")
+        return AudioMetaData(
+            sample_rate=int(info.samplerate),
+            num_frames=int(info.frames),
+            num_channels=int(info.channels),
+            bits_per_sample=bits,
+            encoding=encoding,
+        )
+
+    def _load(
+        uri: Any,
+        frame_offset: int = 0,
+        num_frames: int = -1,
+        normalize: bool = True,
+        channels_first: bool = True,
+        format: str | None = None,
+        buffer_size: int = 4096,
+        backend: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[Any, int]:
+        del normalize, format, buffer_size, backend, kwargs
+        import soundfile as sf
+        import torch
+        frames = -1 if num_frames is None or int(num_frames) < 0 else int(num_frames)
+        data, sample_rate = sf.read(
+            uri,
+            start=max(0, int(frame_offset)),
+            frames=frames,
+            dtype="float32",
+            always_2d=True,
+        )
+        if channels_first:
+            data = data.T
+        return torch.from_numpy(data.copy()), int(sample_rate)
+
+    def _save(
+        uri: Any,
+        src: Any,
+        sample_rate: int,
+        channels_first: bool = True,
+        compression: Any = None,
+        format: str | None = None,
+        encoding: str | None = None,
+        bits_per_sample: int | None = None,
+        buffer_size: int = 4096,
+        backend: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        del compression, format, encoding, bits_per_sample, buffer_size, backend, kwargs
+        import soundfile as sf
+        data = src.detach().cpu().numpy() if hasattr(src, "detach") else src
+        if channels_first and getattr(data, "ndim", 0) == 2:
+            data = data.T
+        sf.write(uri, data, int(sample_rate))
+
+    added: list[str] = []
+    # AudioMetaData is a type annotation in Pyannote 3.x; always expose the
+    # compatibility definition under both historical import locations.
+    torchaudio.AudioMetaData = AudioMetaData  # type: ignore[attr-defined]
+    added.append("AudioMetaData")
+
+    backend_module = sys.modules.get("torchaudio.backend")
+    if backend_module is None:
+        backend_module = types.ModuleType("torchaudio.backend")
+        backend_module.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["torchaudio.backend"] = backend_module
+        torchaudio.backend = backend_module  # type: ignore[attr-defined]
+    common_module = sys.modules.get("torchaudio.backend.common")
+    if common_module is None:
+        common_module = types.ModuleType("torchaudio.backend.common")
+        sys.modules["torchaudio.backend.common"] = common_module
+        backend_module.common = common_module  # type: ignore[attr-defined]
+    common_module.AudioMetaData = AudioMetaData  # type: ignore[attr-defined]
+
+    compatibility = {
+        "list_audio_backends": lambda: ["soundfile"],
+        "get_audio_backend": lambda: "soundfile",
+        "set_audio_backend": lambda backend=None: None,
+        "info": _metadata,
+        "load": _load,
+        "save": _save,
+    }
+    for name, value in compatibility.items():
+        if not hasattr(torchaudio, name):
+            setattr(torchaudio, name, value)
+            added.append(name)
+
+    return {
+        "torchaudio_version": str(getattr(torchaudio, "__version__", "unknown")),
+        "compatibility_members_added": added,
+        "io_backend": "soundfile",
+    }
+
+
 def _module_version(name: str, import_name: str | None = None) -> dict[str, Any]:
     import importlib
     result: dict[str, Any] = {"distribution": name, "module": import_name or name}
@@ -78,7 +208,7 @@ def _module_version(name: str, import_name: str | None = None) -> dict[str, Any]
     return result
 
 
-def _runtime_report(contents: Path, dll_dirs: list[str], deep: bool) -> dict[str, Any]:
+def _runtime_report(contents: Path, dll_dirs: list[str], deep: bool, torchaudio_compat: dict[str, Any]) -> dict[str, Any]:
     modules = [
         ("torch", "torch"),
         ("torchvision", "torchvision"),
@@ -106,6 +236,7 @@ def _runtime_report(contents: Path, dll_dirs: list[str], deep: bool) -> dict[str
         "executable": sys.executable,
         "contents": str(contents),
         "dll_search_dirs": dll_dirs,
+        "torchaudio_compatibility": torchaudio_compat,
         "modules": [_module_version(name, module) for name, module in modules],
     }
     try:
@@ -183,9 +314,10 @@ def _execute_original(contents: Path) -> None:
 def main() -> None:
     contents = _contents_dir()
     dll_dirs = _configure_environment(contents)
+    torchaudio_compat = _install_torchaudio_compat()
     if "--xxl-runtime-info" in sys.argv or "--xxl-self-test" in sys.argv:
         deep = "--xxl-self-test" in sys.argv
-        report = _runtime_report(contents, dll_dirs, deep=deep)
+        report = _runtime_report(contents, dll_dirs, deep=deep, torchaudio_compat=torchaudio_compat)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         failures = [item for item in report["modules"] if not item.get("ok")]
         if failures or "ssl_error" in report or "torch_probe_error" in report:
